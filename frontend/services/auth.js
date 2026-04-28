@@ -5,10 +5,12 @@
 
 import { apiFetch, setToken } from './api';
 
-export async function signup({ email, password, fullName }) {
+export async function signup(payload) {
+  // payload: { email, password, role, firstName, lastName,
+  //            regNo?, faculty?, batch?, department?, designation?, adminCode? }
   const data = await apiFetch('/api/auth/signup', {
     method: 'POST',
-    body: { email, password, fullName },
+    body: payload,
   });
   setToken(data.token);
   return data.user;

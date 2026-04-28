@@ -3,6 +3,12 @@
 // Every module reads from here instead of calling process.env directly.
 
 require('dotenv').config();
+console.log("DB CONFIG DEBUG:", {
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+});
 
 module.exports = {
   port: Number(process.env.PORT) || 5000,
@@ -12,6 +18,10 @@ module.exports = {
     secret:    process.env.JWT_SECRET    || 'dev-secret-change-me',
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   },
+
+  // Shared secret required to register an account with role = 'admin'.
+  // Anyone signing up as admin must provide this code.
+  adminSignupCode: process.env.ADMIN_SIGNUP_CODE || 'CVIATOR-ADMIN-2026',
 
   db: {
     host:     process.env.DB_HOST     || 'localhost',

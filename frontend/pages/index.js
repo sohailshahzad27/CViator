@@ -60,10 +60,12 @@ export default function Home() {
   const [loadingCV, setLoadingCV] = useState(true);
   const [saveState, setSaveState] = useState('idle'); // idle | saving | saved | error
 
-  // Redirect anonymous users to /login.
+  // Redirect anonymous users to /login, and admins to /admin
+  // (admins do not build CVs — the builder is for students/faculty only).
   useEffect(() => {
     if (status === 'unauthenticated') router.replace('/login');
-  }, [status, router]);
+    else if (status === 'authenticated' && user?.isAdmin) router.replace('/admin');
+  }, [status, user, router]);
 
   // Once the session is verified, fetch the user's CV.
   useEffect(() => {

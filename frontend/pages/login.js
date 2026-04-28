@@ -11,23 +11,25 @@ import { useAuth } from '../hooks/useAuth';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { status, login } = useAuth();
+  const { status, user, login } = useAuth();
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
   const [error,    setError]    = useState('');
   const [busy,     setBusy]     = useState(false);
 
   useEffect(() => {
-    if (status === 'authenticated') router.replace('/');
-  }, [status, router]);
+    if (status === 'authenticated') {
+      router.replace(user?.isAdmin ? '/admin' : '/');
+    }
+  }, [status, user, router]);
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
     setBusy(true);
     try {
-      await login({ email: email.trim(), password });
-      router.replace('/');
+      const u = await login({ email: email.trim(), password });
+      router.replace(u?.isAdmin ? '/admin' : '/');
     } catch (err) {
       setError(err.message || 'Could not log in.');
     } finally {

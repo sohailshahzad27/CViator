@@ -9,10 +9,11 @@
 
 const express = require('express');
 const { query } = require('../db/pool');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireNonAdmin } = require('../middleware/auth');
 
 const router = express.Router();
-router.use(requireAuth);
+// Admins cannot build CVs — these endpoints are for students/faculty only.
+router.use(requireAuth, requireNonAdmin);
 
 // ---- GET /api/cv ----
 router.get('/', async (req, res) => {

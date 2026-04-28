@@ -1,8 +1,10 @@
 // backend/middleware/auth.js
-// JWT verification middleware + admin guard.
+// JWT verification middleware + role guards.
 //
-//   requireAuth  — verifies the Bearer token, attaches req.user = { id, email }
-//   requireAdmin — must come after requireAuth; checks is_admin in DB
+//   requireAuth      — verifies the Bearer token, attaches req.user = { id, email }
+//   requireAdmin     — must come after requireAuth; rejects non-admins (403)
+//   requireNonAdmin  — must come after requireAuth; rejects admins (403)
+//                      Used to block admins from CV-builder endpoints.
 
 const jwt = require('jsonwebtoken');
 const { jwt: jwtConfig } = require('../config');
@@ -52,4 +54,20 @@ async function requireAdmin(req, res, next) {
   }
 }
 
-module.exports = { signToken, requireAuth, requireAdmin };
+async function requireNonAdmin(req, res, next) {
+  try {
+    const { rows } = await query(
+      'SELECT is_admin FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    if (rows[0]?.is_admin) {
+      return res.status(403).json({ error: 'Admins cannot build CVs.' });
+    }
+    next();
+  } catch (err) {
+    console.error('[auth] requireNonAdmin check failed:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+module.exports = { signToken, requireAuth, requireAdmin, requireNonAdmin };
