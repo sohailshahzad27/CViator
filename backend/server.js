@@ -1,35 +1,30 @@
 // backend/server.js
 // ---------------------------------------------------------------
-// Main entry point for the Cviator Pro backend.
-// Sets up Express, CORS, JSON parsing, optional MongoDB connection,
-// and mounts all route modules.
+// Cviator Pro backend.
+//   - PostgreSQL for users + per-user CV JSONB
+//   - JWT auth (Bearer header)
+//   - Puppeteer-based PDF generation (kept from previous version)
 // ---------------------------------------------------------------
 
-require('dotenv').config();           // load .env into process.env
-
-// Debug: confirm the Gemini key is actually loaded (don't print the value).
-console.log('ENV KEY EXISTS:', !!process.env.GEMINI_API_KEY);
+require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const mongoose = require('mongoose');
 
-// Route modules (each file registers one concern: pdf, resume CRUD, AI)
-const pdfRoutes = require('./routes/pdf');
-const resumeRoutes = require('./routes/resume');
-const aiRoutes = require('./routes/ai');
+const pdfRoutes  = require('./routes/pdf');
+const authRoutes = require('./routes/auth');
+const cvRoutes   = require('./routes/cv');
+const { initDatabase } = require('./db/init');
 
-const app = express();
-const PORT = process.env.PORT || 5000;
+const app  = express();
+const PORT = Number(process.env.PORT) || 5000;
 
 // ---------------- Middleware ----------------
-// Allow the frontend (running on a different origin) to call the API.
-app.use(cors());
-// Parse JSON bodies up to 2MB (resumes are small but leave headroom).
+const corsOrigin = process.env.FRONTEND_URL || true; // `true` reflects request origin
+app.use(cors({ origin: corsOrigin, credentials: false }));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Simple request logger — helps debugging while running locally.
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
@@ -37,29 +32,33 @@ app.use((req, _res, next) => {
 
 // ---------------- Routes ----------------
 app.get('/', (_req, res) => {
-  res.json({ ok: true, service: 'Cviator Pro API', version: '1.0.0' });
+  res.json({ ok: true, service: 'Cviator Pro API', version: '2.0.0' });
 });
 
-app.use('/generate-pdf', pdfRoutes);   // POST /generate-pdf
-app.use('/', resumeRoutes);            // POST /save-resume, GET /resume/:id
-app.use('/optimize-cv', aiRoutes);     // POST /optimize-cv
+app.use('/api/auth',     authRoutes);
+app.use('/api/cv',       cvRoutes);
+app.use('/generate-pdf', pdfRoutes);
 
-// ---------------- Optional DB connection ----------------
-// We only connect to MongoDB if USE_DB=true in the environment.
-// This keeps the project runnable out-of-the-box with zero infra.
-if (process.env.USE_DB === 'true') {
-  mongoose
-    .connect(process.env.MONGO_URI)
-    .then(() => console.log('✅ Connected to MongoDB'))
-    .catch((err) => {
-      console.error('❌ MongoDB connection failed:', err.message);
-      console.error('   The server will continue running without DB support.');
-    });
-} else {
-  console.log('ℹ️  USE_DB=false — running without MongoDB persistence.');
-}
+// 404 fallback
+app.use((req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.url}` }));
 
-// ---------------- Start server ----------------
-app.listen(PORT, () => {
-  console.log(`🚀 Cviator backend listening on http://localhost:${PORT}`);
+// Generic error handler
+app.use((err, _req, res, _next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
+
+// ---------------- Boot ----------------
+(async () => {
+  try {
+    await initDatabase();
+  } catch (err) {
+    console.error('❌ Database init failed — refusing to start.');
+    console.error(err.message);
+    process.exit(1);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`🚀 Cviator backend listening on http://localhost:${PORT}`);
+  });
+})();

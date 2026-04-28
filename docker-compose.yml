@@ -1,15 +1,34 @@
 # /docker-compose.yml
-# Orchestrates the full Cviator Pro stack: frontend, backend, and MongoDB.
+# Orchestrates the full Cviator Pro stack: PostgreSQL, Express backend,
+# and Next.js frontend.
+#
 # Usage:
 #   docker-compose up --build    # build + start everything
 #   docker-compose down          # stop and remove containers
-#
-# If you don't want MongoDB, comment out the `mongo` service and set
-# USE_DB=false in the backend environment.
+#   docker-compose down -v       # …and wipe the Postgres volume
 
 version: "3.9"
 
 services:
+  # -------- PostgreSQL --------
+  postgres:
+    image: postgres:16-alpine
+    container_name: cviator-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cviator
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cviator"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   # -------- Backend (Express + Puppeteer) --------
   backend:
     build: ./backend
@@ -18,10 +37,17 @@ services:
       - "5000:5000"
     environment:
       - PORT=5000
-      - MONGO_URI=mongodb://mongo:27017/cviator
-      - USE_DB=false   # set to "true" to persist resumes in MongoDB
+      - FRONTEND_URL=http://localhost:3000
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=cviator
+      - JWT_SECRET=dev-only-secret-replace-before-deploying-anywhere-real
+      - JWT_EXPIRES_IN=7d
     depends_on:
-      - mongo
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   # -------- Frontend (Next.js + Tailwind) --------
@@ -31,23 +57,12 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # Inside the Docker network, the backend is reachable as "backend".
-      # From the browser (outside Docker), we still need localhost:5000,
-      # so we expose it via NEXT_PUBLIC_API_URL at build time.
+      # The browser talks to the backend at localhost:5000 (host port);
+      # NEXT_PUBLIC_* is baked in at build time.
       - NEXT_PUBLIC_API_URL=http://localhost:5000
     depends_on:
       - backend
     restart: unless-stopped
 
-  # -------- MongoDB (optional) --------
-  mongo:
-    image: mongo:6
-    container_name: cviator-mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-    restart: unless-stopped
-
 volumes:
-  mongo-data:
+  postgres-data:

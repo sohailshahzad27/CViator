@@ -13,12 +13,12 @@ const { generateHTML } = require('../utils/generateHTML');
 const router = express.Router();
 
 router.post('/', async (req, res) => {
-  const { resumeData = {}, template = 'classic', theme = 'aurora' } = req.body || {};
+  const { resumeData = {}, template = 'classic' } = req.body || {};
 
   let browser;
   try {
     // Build the HTML string from the user's resume data.
-    const html = generateHTML(resumeData, template, theme);
+    const html = generateHTML(resumeData, template);
 
     // Launch headless Chromium.
     // `--no-sandbox` is required when running as root inside Docker.
