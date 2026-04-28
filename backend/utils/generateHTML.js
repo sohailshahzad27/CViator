@@ -134,93 +134,117 @@ function renderCustomSections(customSections, accent, marker) {
 }
 
 function classicTemplate(d, t) {
-  const marker   = d.markerStyle || 'number';
-  const contact  = [d.email, d.phone, d.location].filter(Boolean).map(esc).join(' • ');
-  const social   = [stripProtocol(d.linkedin), stripProtocol(d.github)].filter(Boolean).map(esc).join(' • ');
-  const skillsList = normalizeSkills(d.skills);
+  const MAX_SKILLS   = 8;
+  const MAX_PROJECTS = 5;
+
+  const contact = [d.email, d.phone, d.location].filter(Boolean).map(esc).join('  |  ');
+  const social  = [stripProtocol(d.linkedin), stripProtocol(d.github)].filter(Boolean).map(esc).join('  |  ');
+
   const photo = d.photo
     ? `<img class="photo photo-classic" src="${esc(d.photo)}" alt="${esc(d.name || 'Profile')}" />`
-    : '';
+    : `<div class="photo photo-classic photo-placeholder">Photo</div>`;
+
+  const skillsList = normalizeSkills(d.skills).slice(0, MAX_SKILLS);
 
   const renderEntryHeader = (left, sub, right) => `
-    <div class="entry-header">
-      <div>
-        <div class="entry-left">${esc(left || '')}</div>
-        ${sub ? `<div class="entry-sub" style="color:${t.accent}">${esc(sub)}</div>` : ''}
+    <div class="classic-entry-header">
+      <div class="classic-entry-left">
+        <span class="entry-title">${esc(left || '')}</span>
+        ${sub ? ` <span class="entry-subtitle"> — ${esc(sub)}</span>` : ''}
       </div>
-      ${right ? `<div class="entry-right">${esc(right)}</div>` : ''}
+      ${right ? `<span class="entry-date">${esc(right)}</span>` : ''}
     </div>`;
 
+  const education = sortByDateDesc(d.education || []).map((ed) => `
+    <div class="classic-block">
+      ${renderEntryHeader(ed.school, ed.degree, formatDateRange(ed.from, ed.to, ed.year || ''))}
+    </div>`).join('');
+
   const experience = sortByDateDesc(d.experience || []).map((ex) => `
-    <div>
+    <div class="classic-block">
       ${renderEntryHeader(ex.company, ex.role, formatDateRange(ex.from, ex.to, ex.duration || ''))}
-      ${multilineBody(ex.description)}
+      ${ex.description ? `<p class="classic-body">${esc(ex.description).replace(/\r?\n/g, '<br />')}</p>` : ''}
     </div>`).join('');
 
-  const education = sortByDateDesc(d.education || []).map((ed) =>
-    renderEntryHeader(ed.school, ed.degree, formatDateRange(ed.from, ed.to, ed.year || ''))
-  ).join('');
-
-  const projects = (d.projects || []).map((pr, index) => `
-    <div class="list-entry">
-      ${markerHtml(index, marker)}
-      <div class="list-content">
-        <div class="entry-header">
-          <div class="entry-left">${esc(pr.title || '')}</div>
-          ${pr.link ? `<a class="link-muted" href="${esc(toExternalUrl(pr.link))}">${esc(stripProtocol(pr.link))}</a>` : ''}
-        </div>
-        ${multilineBody(pr.description)}
+  const projects = sortByDateDesc(d.projects || []).slice(0, MAX_PROJECTS).map((pr) => `
+    <div class="classic-block">
+      <div class="classic-entry-header">
+        <span class="entry-title">${esc(pr.title || '')}</span>
+        ${pr.link ? `<a class="entry-date" href="${esc(toExternalUrl(pr.link))}">${esc(stripProtocol(pr.link))}</a>` : ''}
       </div>
+      ${pr.description ? `<p class="classic-body">${esc(pr.description).replace(/\r?\n/g, '<br />')}</p>` : ''}
     </div>`).join('');
 
-  const skills = skillsList.map((skill, index) => `
-    <div class="list-entry">
-      ${markerHtml(index, marker)}
-      <div class="list-content">
-        <div class="entry-left">${esc(skill.name)}</div>
-        ${skill.description ? multilineBody(skill.description) : ''}
-      </div>
+  const skills = skillsList.map((skill) => `
+    <div class="skill-line">
+      <span class="skill-cat">${esc(skill.name)}</span>
+      ${skill.description ? `<span class="skill-val">: ${esc(skill.description)}</span>` : ''}
     </div>`).join('');
+
+  const classicSectionTag = (title) =>
+    `<h2 class="classic-h2">${esc(title)}</h2>`;
+
+  const renderClassicCustomSections = () =>
+    (d.customSections || []).map((s) => {
+      const items = s?.items || [];
+      const hasLegacy = !items.length && s?.content;
+      if (!s?.title && !items.length && !hasLegacy) return '';
+      const body = hasLegacy
+        ? `<p class="classic-body">${esc(s.content).replace(/\r?\n/g, '<br />')}</p>`
+        : items.map((item) => `
+            <div class="skill-line">
+              <span class="skill-cat">${esc(item.name || '')}</span>
+              ${item.description ? `<span class="skill-val"> — ${esc(item.description)}</span>` : ''}
+            </div>`).join('');
+      return `
+        <section class="classic-section">
+          ${classicSectionTag(s.title || 'Custom Section')}
+          ${body}
+        </section>`;
+    }).join('');
 
   return `
     <article class="classic">
       <header class="classic-header">
         <div class="header-main">
-          <h1>${esc(d.name || 'Your Name')}</h1>
-          ${contact ? `<div class="contact">${contact}</div>` : ''}
-          ${social ? `<div class="contact muted">${social}</div>` : ''}
+          <div class="classic-name">${esc(d.name || 'Your Name')}</div>
+          ${contact ? `<div class="classic-contact">${contact}</div>` : ''}
+          ${social  ? `<div class="classic-contact classic-social">${social}</div>` : ''}
         </div>
         ${photo}
       </header>
 
       ${d.summary ? `
-        <section>
-          ${sectionTag('Summary', t.accent)}
-          ${multilineBody(d.summary)}
+        <section class="classic-section">
+          ${classicSectionTag('Objective')}
+          <p class="classic-body">${esc(d.summary).replace(/\r?\n/g, '<br />')}</p>
         </section>` : ''}
 
-      <section>
-        ${sectionTag('Experience', t.accent)}
-        <div class="stack">${experience}</div>
-      </section>
+      ${education ? `
+        <section class="classic-section">
+          ${classicSectionTag('Education')}
+          ${education}
+        </section>` : ''}
 
-      <section>
-        ${sectionTag('Education', t.accent)}
-        <div class="stack">${education}</div>
-      </section>
+      ${experience ? `
+        <section class="classic-section">
+          ${classicSectionTag('Work Experience')}
+          ${experience}
+        </section>` : ''}
 
-      <section>
-        ${sectionTag('Projects', t.accent)}
-        <div class="stack">${projects}</div>
-      </section>
+      ${projects ? `
+        <section class="classic-section">
+          ${classicSectionTag('Projects')}
+          ${projects}
+        </section>` : ''}
 
       ${skills ? `
-      <section>
-        ${sectionTag(d.skillsTitle || 'Skills', t.accent)}
-        <div class="stack skills-list">${skills}</div>
-      </section>` : ''}
+        <section class="classic-section">
+          ${classicSectionTag(d.skillsTitle || 'Skills')}
+          <div class="skills-classic">${skills}</div>
+        </section>` : ''}
 
-      ${renderCustomSections(d.customSections, t.accent, marker)}
+      ${renderClassicCustomSections()}
     </article>`;
 }
 
@@ -406,33 +430,84 @@ function generateHTML(resumeData = {}, templateName = 'classic') {
       flex: 1;
       min-width: 0;
     }
-    .classic { padding: 40px; }
+    .classic {
+      padding: 18mm 16mm 14mm 16mm;
+      font-family: 'Times New Roman', Times, Georgia, serif;
+      font-size: 11px;
+      line-height: 1.55;
+    }
     .classic-header {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
-      gap: 32px;
-      padding-bottom: 28px;
-      border-bottom: 2px solid #94a3b8;
-      margin-bottom: 4px;
+      gap: 16px;
+      padding-bottom: 10px;
+      border-bottom: 2.5px solid #1a1a1a;
+      margin-bottom: 2px;
     }
-    .header-main {
-      flex: 1;
-      min-width: 0;
-      padding-top: 4px;
+    .header-main { flex: 1; min-width: 0; }
+    .classic-name {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      line-height: 1.1;
+      color: #0f172a;
+      text-transform: uppercase;
     }
-    .contact { margin-top: 8px; font-size: 12.5px; color: #475569; }
-    .contact.muted { margin-top: 6px; color: #64748b; }
+    .classic-contact { margin-top: 5px; font-size: 10.5px; color: #334155; line-height: 1.6; }
+    .classic-social  { margin-top: 2px; color: #475569; }
     .photo {
-      width: 128px;
-      height: 128px;
-      border-radius: 999px;
-      object-fit: cover;
       flex-shrink: 0;
+      object-fit: cover;
     }
     .photo-classic {
-      border: 1px solid #e2e8f0;
+      width: 72px;
+      height: 88px;
+      border: 1px solid #cbd5e1;
     }
+    .photo-placeholder {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #e2e8f0;
+      font-size: 9px;
+      color: #94a3b8;
+      text-align: center;
+      line-height: 1.3;
+    }
+    .classic-section { margin-top: 12px; }
+    .classic-h2 {
+      margin: 0 0 5px 0;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: #1a1a1a;
+      border-bottom: 2px solid #1a1a1a;
+      padding-bottom: 3px;
+    }
+    .classic-block { margin-bottom: 7px; }
+    .classic-entry-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .classic-entry-left { flex: 1; min-width: 0; }
+    .entry-title   { font-weight: 700; font-size: 11.5px; color: #0f172a; }
+    .entry-subtitle { font-weight: 400; font-size: 11px; color: #334155; }
+    .entry-date    { font-size: 10.5px; color: #64748b; white-space: nowrap; flex-shrink: 0; }
+    .classic-body  {
+      margin: 3px 0 0 0;
+      font-size: 11px;
+      color: #334155;
+      text-align: justify;
+      line-height: 1.55;
+    }
+    .skills-classic { display: flex; flex-direction: column; gap: 4px; }
+    .skill-line { font-size: 11px; color: #1e293b; line-height: 1.5; }
+    .skill-cat  { font-weight: 700; }
+    .skill-val  { font-weight: 400; color: #334155; }
     .modern {
       display: grid;
       grid-template-columns: 30% minmax(0, 70%);

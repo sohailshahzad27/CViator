@@ -1,15 +1,24 @@
 // frontend/components/templates/TemplateClassic.js
 // ---------------------------------------------------------------
-// Classic template — strictly minimal, black & white, print-ready.
-// A subtle accent color highlights section headings.
+// Classic CV template — one-page A4, left-aligned header, justified
+// body text. Mirrors the reference PDF layout exactly.
 //
-// Mirrors backend/utils/generateHTML.js so the PDF looks identical.
+// Display limits (render layer only — full data stays in DB):
+//   • Skills:   max 8  (rendered as "Category: skill1, skill2")
+//   • Projects: max 5  (most-recent)
+//
+// Section order: Summary → Education → Experience → Projects →
+//   Skills → custom sections
 // ---------------------------------------------------------------
 
 import { memo } from 'react';
 import { formatDateRange } from './dateRange';
 
-const accent = '#334155';
+const ACCENT = '#1a1a1a';
+const MAX_SKILLS   = 8;
+const MAX_PROJECTS = 5;
+
+// ── helpers ──────────────────────────────────────────────────────
 
 function sortByDateDesc(items = []) {
   const now = Date.now();
@@ -23,153 +32,281 @@ function sortByDateDesc(items = []) {
     const aTo = time(a?.to) ?? (a?.from ? now + 1 : 0);
     const bTo = time(b?.to) ?? (b?.from ? now + 1 : 0);
     if (aTo !== bTo) return bTo - aTo;
-    const aFrom = time(a?.from) ?? 0;
-    const bFrom = time(b?.from) ?? 0;
-    return bFrom - aFrom;
+    return (time(b?.from) ?? 0) - (time(a?.from) ?? 0);
   });
 }
 
-function markerText(index, style) {
-  if (style === 'none') return null;
-  return style === 'dot' ? '•' : `${index + 1}.`;
+function normalizeSkills(skills = []) {
+  return (skills || [])
+    .map((s) =>
+      typeof s === 'string'
+        ? { name: s, description: '' }
+        : { name: s?.name || '', description: s?.description || '' }
+    )
+    .filter((s) => s.name);
 }
 
+function stripProtocol(v = '') {
+  return (v || '').replace(/^https?:\/\//i, '');
+}
+
+function toExternalUrl(v = '') {
+  if (!v) return '#';
+  return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+}
+
+// ── sub-components ────────────────────────────────────────────────
+
+function Section({ title, children }) {
+  return (
+    <section style={{ marginTop: '12px' }}>
+      <h2
+        style={{
+          margin: '0 0 5px 0',
+          fontSize: '10px',
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.18em',
+          color: ACCENT,
+          borderBottom: `2px solid ${ACCENT}`,
+          paddingBottom: '3px',
+        }}
+      >
+        {title}
+      </h2>
+      <div style={{ marginTop: '6px' }}>{children}</div>
+    </section>
+  );
+}
+
+function EntryBlock({ title, subtitle, dateRange, description }) {
+  return (
+    <div style={{ marginBottom: '7px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+        <div style={{ minWidth: 0 }}>
+          <span style={{ fontWeight: 700, fontSize: '11.5px', color: '#0f172a' }}>{title}</span>
+          {subtitle && (
+            <span style={{ fontWeight: 400, fontSize: '11px', color: '#334155' }}>
+              {' — '}{subtitle}
+            </span>
+          )}
+        </div>
+        {dateRange && (
+          <span style={{ fontSize: '10.5px', color: '#64748b', whiteSpace: 'nowrap', flexShrink: 0 }}>
+            {dateRange}
+          </span>
+        )}
+      </div>
+      {description && (
+        <p style={{ margin: '3px 0 0 0', fontSize: '11px', color: '#334155', textAlign: 'justify', lineHeight: 1.55, whiteSpace: 'pre-line' }}>
+          {description}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── main template ─────────────────────────────────────────────────
+
 function TemplateClassic({ resume }) {
-  const r = resume || {};
-  const skills     = normalizeSkills(r.skills);
+  const r         = resume || {};
+  const skills    = normalizeSkills(r.skills).slice(0, MAX_SKILLS);
+  const projects  = sortByDateDesc(r.projects || []).slice(0, MAX_PROJECTS);
+  const education = sortByDateDesc(r.education || []);
   const experience = sortByDateDesc(r.experience || []);
-  const education  = sortByDateDesc(r.education  || []);
-  const marker     = r.markerStyle || 'number';
 
   return (
-    <article className="bg-white p-10 text-[12px] leading-[1.62] text-slate-900">
-
-      {/* Header — bolder bottom border to separate from body */}
-      <header className="mb-8 flex items-start justify-between gap-8 border-b-2 border-slate-400 pb-7">
-        <div className="min-w-0 flex-1 pt-1">
-          <h1 className="text-[34px] font-bold leading-tight tracking-tight">
+    <article
+      style={{
+        background: '#ffffff',
+        width: '210mm',
+        minHeight: '297mm',
+        maxWidth: '100%',
+        margin: '0 auto',
+        padding: '18mm 16mm 14mm 16mm',
+        fontFamily: "'Times New Roman', Times, Georgia, serif",
+        fontSize: '11px',
+        lineHeight: 1.55,
+        color: '#0f172a',
+        boxSizing: 'border-box',
+      }}
+    >
+      {/* ── Header ── */}
+      <header
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: '16px',
+          paddingBottom: '10px',
+          borderBottom: '2.5px solid #1a1a1a',
+          marginBottom: '2px',
+        }}
+      >
+        {/* Left: all contact info */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: '22px',
+              fontWeight: 700,
+              letterSpacing: '-0.01em',
+              lineHeight: 1.1,
+              color: '#0f172a',
+              textTransform: 'uppercase',
+            }}
+          >
             {r.name || 'Your Name'}
-          </h1>
-          <p className="mt-2 text-[12.5px] text-slate-600">
-            {[r.email, r.phone, r.location].filter(Boolean).join(' • ')}
-          </p>
-          <p className="mt-1.5 text-[12.5px] text-slate-500">
-            {[stripProtocol(r.linkedin), stripProtocol(r.github)].filter(Boolean).join(' • ')}
-          </p>
+          </div>
+          <div style={{ marginTop: '5px', fontSize: '10.5px', color: '#334155', lineHeight: 1.6 }}>
+            {[r.email, r.phone, r.location].filter(Boolean).join('  |  ')}
+          </div>
+          {(r.linkedin || r.github) && (
+            <div style={{ marginTop: '2px', fontSize: '10.5px', color: '#475569' }}>
+              {[stripProtocol(r.linkedin), stripProtocol(r.github)].filter(Boolean).join('  |  ')}
+            </div>
+          )}
         </div>
-        {r.photo && (
-          <img
-            src={r.photo}
-            alt={r.name || 'Profile photo'}
-            className="h-28 w-28 flex-shrink-0 rounded-full border border-slate-200 object-cover"
-          />
-        )}
+
+        {/* Right: photo or placeholder */}
+        <div style={{ flexShrink: 0 }}>
+          {r.photo ? (
+            <img
+              src={r.photo}
+              alt={r.name || 'Profile'}
+              style={{
+                width: '72px',
+                height: '88px',
+                objectFit: 'cover',
+                border: '1px solid #cbd5e1',
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                width: '72px',
+                height: '88px',
+                background: '#e2e8f0',
+                border: '1px solid #cbd5e1',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '9px',
+                color: '#94a3b8',
+                textAlign: 'center',
+                lineHeight: 1.3,
+              }}
+            >
+              Photo
+            </div>
+          )}
+        </div>
       </header>
 
+      {/* ── Objective / Summary ── */}
       {r.summary && (
-        <Section title="Summary" accent={accent}>
-          <MultilineText>{r.summary}</MultilineText>
+        <Section title="Objective">
+          <p style={{ margin: 0, fontSize: '11px', color: '#1e293b', textAlign: 'justify', lineHeight: 1.55 }}>
+            {r.summary}
+          </p>
         </Section>
       )}
 
-      <Section title="Experience" accent={accent}>
-        {experience.map((ex, i) => (
-          <Entry key={ex.id || `exp-${i}`}>
-            <EntryHeader
-              left={ex.company}
-              sub={ex.role}
-              right={formatDateRange(ex.from, ex.to, { fallback: ex.duration || '' })}
-              accent={accent}
+      {/* ── Education ── */}
+      {education.length > 0 && (
+        <Section title="Education">
+          {education.map((ed, i) => (
+            <EntryBlock
+              key={ed.id || `edu-${i}`}
+              title={ed.school}
+              subtitle={ed.degree}
+              dateRange={formatDateRange(ed.from, ed.to, { fallback: ed.year || '' })}
             />
-            {ex.description && (
-              <MultilineText className="mt-1.5">{ex.description}</MultilineText>
-            )}
-          </Entry>
-        ))}
-      </Section>
-
-      <Section title="Education" accent={accent}>
-        {education.map((ed, i) => (
-          <Entry key={ed.id || `edu-${i}`}>
-            <EntryHeader
-              left={ed.school}
-              sub={ed.degree}
-              right={formatDateRange(ed.from, ed.to, { fallback: ed.year || '' })}
-              accent={accent}
-            />
-          </Entry>
-        ))}
-      </Section>
-
-      <Section title="Projects" accent={accent}>
-        <div className="space-y-4">
-          {(r.projects || []).map((pr, i) => (
-            <Entry key={`proj-${i}`}>
-              <div className="flex items-start gap-3">
-                {markerText(i, marker) && (
-                  <div className="min-w-[1.25rem] shrink-0 pt-0.5 text-xs font-semibold text-slate-500">
-                    {markerText(i, marker)}
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <div className="font-semibold text-slate-900">{pr.title}</div>
-                    {pr.link && (
-                      <a href={toExternalUrl(pr.link)} target="_blank" rel="noreferrer" className="text-xs text-slate-500 hover:text-slate-900">
-                        {stripProtocol(pr.link)}
-                      </a>
-                    )}
-                  </div>
-                  {pr.description && <MultilineText className="mt-1.5">{pr.description}</MultilineText>}
-                </div>
-              </div>
-            </Entry>
           ))}
-        </div>
-      </Section>
+        </Section>
+      )}
 
-      {skills.length > 0 && (
-        <Section title={r.skillsTitle || 'Skills'} accent={accent}>
-          <div className="space-y-3">
-            {skills.map((skill, i) => (
-              <div key={`skill-${i}`} className="flex items-start gap-3">
-                {markerText(i, marker) && (
-                  <div className="min-w-[1rem] shrink-0 pt-0.5 text-xs text-slate-500">
-                    {markerText(i, marker)}
-                  </div>
+      {/* ── Work Experience ── */}
+      {experience.length > 0 && (
+        <Section title="Work Experience">
+          {experience.map((ex, i) => (
+            <EntryBlock
+              key={ex.id || `exp-${i}`}
+              title={ex.company}
+              subtitle={ex.role}
+              dateRange={formatDateRange(ex.from, ex.to, { fallback: ex.duration || '' })}
+              description={ex.description}
+            />
+          ))}
+        </Section>
+      )}
+
+      {/* ── Projects ── */}
+      {projects.length > 0 && (
+        <Section title="Projects">
+          {projects.map((pr, i) => (
+            <div key={pr.id || `proj-${i}`} style={{ marginBottom: '7px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px' }}>
+                <span style={{ fontWeight: 700, fontSize: '11.5px', color: '#0f172a' }}>
+                  {pr.title}
+                </span>
+                {pr.link && (
+                  <a
+                    href={toExternalUrl(pr.link)}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ fontSize: '10px', color: '#64748b', flexShrink: 0 }}
+                  >
+                    {stripProtocol(pr.link)}
+                  </a>
                 )}
-                <div className="min-w-0">
-                  <div className="font-medium text-slate-900">{skill.name}</div>
-                  {skill.description && <MultilineText className="mt-0.5">{skill.description}</MultilineText>}
-                </div>
+              </div>
+              {pr.description && (
+                <p style={{ margin: '3px 0 0 0', fontSize: '11px', color: '#334155', textAlign: 'justify', lineHeight: 1.55, whiteSpace: 'pre-line' }}>
+                  {pr.description}
+                </p>
+              )}
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {/* ── Skills ── */}
+      {skills.length > 0 && (
+        <Section title={r.skillsTitle || 'Skills'}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {skills.map((skill, i) => (
+              <div key={`skill-${i}`} style={{ fontSize: '11px', color: '#1e293b', lineHeight: 1.5 }}>
+                <span style={{ fontWeight: 700 }}>{skill.name}</span>
+                {skill.description && (
+                  <span style={{ fontWeight: 400, color: '#334155' }}>
+                    {': '}{skill.description}
+                  </span>
+                )}
               </div>
             ))}
           </div>
         </Section>
       )}
 
+      {/* ── Custom Sections (Achievements, etc.) ── */}
       {(r.customSections || []).map((sec, si) => {
         const items = sec?.items || [];
-        // Backward compat: old format used a plain `content` string
-        const hasLegacyContent = !items.length && sec?.content;
-        if (!sec?.title && !items.length && !hasLegacyContent) return null;
+        const hasLegacy = !items.length && sec?.content;
+        if (!sec?.title && !items.length && !hasLegacy) return null;
         return (
-          <Section key={sec.id || `custom-${si}`} title={sec.title || 'Custom Section'} accent={accent}>
-            {hasLegacyContent ? (
-              <MultilineText>{sec.content}</MultilineText>
+          <Section key={sec.id || `custom-${si}`} title={sec.title || 'Custom Section'}>
+            {hasLegacy ? (
+              <p style={{ margin: 0, fontSize: '11px', color: '#334155', textAlign: 'justify', lineHeight: 1.55 }}>
+                {sec.content}
+              </p>
             ) : (
-              <div className="space-y-3">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 {items.map((item, ii) => (
-                  <div key={item.id || `ci-${ii}`} className="flex items-start gap-3">
-                    {markerText(ii, marker) && (
-                      <div className="min-w-[1rem] shrink-0 pt-0.5 text-xs text-slate-500">
-                        {markerText(ii, marker)}
-                      </div>
+                  <div key={item.id || `ci-${ii}`} style={{ fontSize: '11px', color: '#1e293b', lineHeight: 1.5 }}>
+                    <span style={{ fontWeight: 700 }}>{item.name}</span>
+                    {item.description && (
+                      <span style={{ color: '#334155' }}>{' — '}{item.description}</span>
                     )}
-                    <div className="min-w-0">
-                      <div className="font-medium text-slate-900">{item.name}</div>
-                      {item.description && <MultilineText className="mt-0.5">{item.description}</MultilineText>}
-                    </div>
                   </div>
                 ))}
               </div>
@@ -182,66 +319,3 @@ function TemplateClassic({ resume }) {
 }
 
 export default memo(TemplateClassic);
-
-// ── sub-components ────────────────────────────────────────────
-
-function Section({ title, accent, children }) {
-  return (
-    <section className="mt-7">
-      <h2
-        className="mb-3.5 pb-1 text-[11px] font-semibold uppercase tracking-[0.2em]"
-        style={{ color: accent, borderBottom: `1px solid ${accent}33` }}
-      >
-        {title}
-      </h2>
-      <div className="space-y-4">{children}</div>
-    </section>
-  );
-}
-
-function Entry({ children }) {
-  return <div>{children}</div>;
-}
-
-function EntryHeader({ left, sub, right, accent }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <div>
-        <div className="text-[13px] font-semibold text-slate-900">{left}</div>
-        {sub && (
-          <div className="mt-0.5 text-[11.5px] font-medium" style={{ color: accent }}>
-            {sub}
-          </div>
-        )}
-      </div>
-      {right && <div className="text-xs text-slate-500">{right}</div>}
-    </div>
-  );
-}
-
-function MultilineText({ children, className = '' }) {
-  return (
-    <p className={`whitespace-pre-line break-words text-slate-700 ${className}`.trim()}>
-      {children}
-    </p>
-  );
-}
-
-function toExternalUrl(value = '') {
-  if (!value) return '#';
-  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
-}
-
-function stripProtocol(value = '') {
-  return (value || '').replace(/^https?:\/\//i, '');
-}
-
-function normalizeSkills(skills = []) {
-  return (skills || [])
-    .map((skill) => (
-      typeof skill === 'string'
-        ? { name: skill, description: '' }
-        : { name: skill?.name || '', description: skill?.description || '' }
-    ))
-    .filter((s) => s.name || s.description);
-}
