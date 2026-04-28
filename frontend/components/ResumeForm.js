@@ -1,21 +1,16 @@
 // frontend/components/ResumeForm.js
-// ---------------------------------------------------------------
-// Resume form. Flat white cards, one heading per section.
+// Resume form — flat white cards, one heading per section.
 //
-// Education & Experience – from/to calendar date pickers, sorted
-//   descending by date with stable IDs so reorder keeps focus.
-//
-// Custom sections – same pattern as Skills: a section title plus
-//   unlimited items, each with a name and an optional description.
-//
-// Marker style – a global "Formatting" selector at the top lets
-//   the user choose Numbers (1. 2. …), Dots (• •), or None across
-//   Projects, Skills, and Custom sections.
-// ---------------------------------------------------------------
+// Education & Experience:  calendar date pickers, sorted descending by date,
+//   stable IDs so reorder keeps React reconciliation correct.
+// Projects, Skills:        stable IDs for consistent keys.
+// Custom sections:         section title + unlimited named items with optional description.
+// Formatting bar:          global marker-style selector (Numbers / Dots / None).
 
 import { memo, useCallback, useMemo, useState } from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
+import { uid, withId, sortByDateDesc, normalizeSkills } from '../utils/resume';
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png'];
 const MARKER_OPTIONS = [
@@ -24,37 +19,19 @@ const MARKER_OPTIONS = [
   { value: 'none',   label: 'None'  },
 ];
 
-function uid() {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function withId(item) {
-  return item && item.id ? item : { ...item, id: uid() };
-}
-
-function toTime(value) {
-  if (!value) return null;
-  const d = value instanceof Date ? value : new Date(value);
-  const t = d.getTime();
-  return Number.isFinite(t) ? t : null;
-}
-
-function sortByDateDesc(items = []) {
-  const now = Date.now();
-  return [...items].sort((a, b) => {
-    const aTo = toTime(a?.to) ?? (a?.from ? now + 1 : 0);
-    const bTo = toTime(b?.to) ?? (b?.from ? now + 1 : 0);
-    if (aTo !== bTo) return bTo - aTo;
-    const aFrom = toTime(a?.from) ?? 0;
-    const bFrom = toTime(b?.from) ?? 0;
-    return bFrom - aFrom;
-  });
+// Ensure every skill has an id (normalizeSkills from utils strips them).
+function ensureSkillIds(skills = []) {
+  return (skills || []).map((s) =>
+    typeof s === 'string'
+      ? { id: uid(), name: s, description: '' }
+      : { id: s.id || uid(), name: s.name || '', description: s.description || '' }
+  );
 }
 
 function ResumeForm({ resume, setResume }) {
   const [uploadError, setUploadError] = useState('');
 
-  // ── generic helpers ──────────────────────────────────────────
+  // ── Generic field helpers ────────────────────────────────────
   const updateField = useCallback((key, value) => {
     setResume((prev) => ({ ...prev, [key]: value }));
   }, [setResume]);
@@ -66,14 +43,6 @@ function ResumeForm({ resume, setResume }) {
         item.id === id ? { ...item, [field]: value } : item
       ),
     }));
-  }, [setResume]);
-
-  const updateArrayItem = useCallback((key, index, field, value) => {
-    setResume((prev) => {
-      const arr = [...(prev[key] || [])];
-      arr[index] = { ...arr[index], [field]: value };
-      return { ...prev, [key]: arr };
-    });
   }, [setResume]);
 
   const addArrayItem = useCallback((key, blank) => {
@@ -90,46 +59,31 @@ function ResumeForm({ resume, setResume }) {
     }));
   }, [setResume]);
 
-  const removeArrayItem = useCallback((key, index) => {
-    setResume((prev) => {
-      const arr = [...(prev[key] || [])];
-      arr.splice(index, 1);
-      return { ...prev, [key]: arr };
-    });
-  }, [setResume]);
-
-  // ── skills ───────────────────────────────────────────────────
-  const normalizeSkills = useCallback((skills = []) =>
-    (skills || []).map((s) =>
-      typeof s === 'string'
-        ? { name: s, description: '' }
-        : { name: s?.name || '', description: s?.description || '' }
-    ), []);
-
+  // ── Skills (use ensureSkillIds so operations are ID-safe) ────
   const addSkill = useCallback(() => {
     setResume((prev) => ({
       ...prev,
-      skills: [...normalizeSkills(prev.skills), { name: '', description: '' }],
+      skills: [...ensureSkillIds(prev.skills), { id: uid(), name: '', description: '' }],
     }));
-  }, [setResume, normalizeSkills]);
+  }, [setResume]);
 
-  const updateSkill = useCallback((index, field, value) => {
-    setResume((prev) => {
-      const skills = normalizeSkills(prev.skills);
-      skills[index] = { ...skills[index], [field]: value };
-      return { ...prev, skills };
-    });
-  }, [setResume, normalizeSkills]);
+  const updateSkill = useCallback((id, field, value) => {
+    setResume((prev) => ({
+      ...prev,
+      skills: ensureSkillIds(prev.skills).map((s) =>
+        s.id === id ? { ...s, [field]: value } : s
+      ),
+    }));
+  }, [setResume]);
 
-  const removeSkill = useCallback((index) => {
-    setResume((prev) => {
-      const skills = normalizeSkills(prev.skills);
-      skills.splice(index, 1);
-      return { ...prev, skills };
-    });
-  }, [setResume, normalizeSkills]);
+  const removeSkill = useCallback((id) => {
+    setResume((prev) => ({
+      ...prev,
+      skills: ensureSkillIds(prev.skills).filter((s) => s.id !== id),
+    }));
+  }, [setResume]);
 
-  // ── custom sections ──────────────────────────────────────────
+  // ── Custom section items ─────────────────────────────────────
   const addCustomSectionItem = useCallback((sectionId) => {
     setResume((prev) => ({
       ...prev,
@@ -168,7 +122,7 @@ function ResumeForm({ resume, setResume }) {
     }));
   }, [setResume]);
 
-  // ── photo ────────────────────────────────────────────────────
+  // ── Photo upload ─────────────────────────────────────────────
   const handlePhotoChange = useCallback((event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -183,15 +137,15 @@ function ResumeForm({ resume, setResume }) {
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => { updateField('photo', reader.result); setUploadError(''); };
+    reader.onload  = () => { updateField('photo', reader.result); setUploadError(''); };
     reader.onerror = () => setUploadError('Could not read that file. Try another image.');
     reader.readAsDataURL(file);
   }, [updateField]);
 
-  // ── memoised sorted lists ─────────────────────────────────────
+  // ── Memoised derived data ─────────────────────────────────────
   const sortedExperience = useMemo(() => sortByDateDesc(resume.experience || []), [resume.experience]);
   const sortedEducation  = useMemo(() => sortByDateDesc(resume.education  || []), [resume.education]);
-  const normalizedSkills = useMemo(() => normalizeSkills(resume.skills),          [resume.skills, normalizeSkills]);
+  const skillsWithIds    = useMemo(() => ensureSkillIds(resume.skills),           [resume.skills]);
   const markerStyle      = resume.markerStyle || 'number';
 
   return (
@@ -225,7 +179,7 @@ function ResumeForm({ resume, setResume }) {
         </div>
       </section>
 
-      {/* ── Personal information ────────────────────────────── */}
+      {/* ── Personal information ─────────────────────────────── */}
       <Section title="Personal information">
         <div className="flex flex-col gap-6 sm:flex-row">
           <div className="flex flex-shrink-0 items-start gap-4 sm:flex-col sm:items-center sm:gap-3">
@@ -237,7 +191,7 @@ function ResumeForm({ resume, setResume }) {
               )}
             </div>
             <div className="flex flex-col items-start gap-1 sm:items-center">
-              <label className="inline-flex cursor-pointer items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-brand-500 hover:text-brand-700">
+              <label className="inline-flex cursor-pointer items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:text-slate-900">
                 {resume.photo ? 'Change' : 'Upload'}
                 <input type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" className="hidden" onChange={handlePhotoChange} />
               </label>
@@ -262,7 +216,7 @@ function ResumeForm({ resume, setResume }) {
         </div>
       </Section>
 
-      {/* ── Social links ────────────────────────────────────── */}
+      {/* ── Social links ─────────────────────────────────────── */}
       <Section title="Social links">
         <Grid>
           <Input label="LinkedIn URL" value={resume.linkedin} placeholder="linkedin.com/in/your-name" onChange={(v) => updateField('linkedin', v)} />
@@ -270,12 +224,12 @@ function ResumeForm({ resume, setResume }) {
         </Grid>
       </Section>
 
-      {/* ── Summary ─────────────────────────────────────────── */}
+      {/* ── Summary ──────────────────────────────────────────── */}
       <Section title="Professional summary">
         <Textarea value={resume.summary} onChange={(v) => updateField('summary', v)} rows={4} placeholder="Write a short professional summary..." />
       </Section>
 
-      {/* ── Experience ──────────────────────────────────────── */}
+      {/* ── Experience ───────────────────────────────────────── */}
       <Section
         title="Experience"
         onAdd={() => addArrayItem('experience', { company: '', role: '', from: null, to: null, description: '' })}
@@ -295,7 +249,7 @@ function ResumeForm({ resume, setResume }) {
         ))}
       </Section>
 
-      {/* ── Education ───────────────────────────────────────── */}
+      {/* ── Education ────────────────────────────────────────── */}
       <Section
         title="Education"
         onAdd={() => addArrayItem('education', { school: '', degree: '', from: null, to: null })}
@@ -314,47 +268,45 @@ function ResumeForm({ resume, setResume }) {
         ))}
       </Section>
 
-      {/* ── Projects ────────────────────────────────────────── */}
+      {/* ── Projects ─────────────────────────────────────────── */}
       <Section
         title="Projects"
         onAdd={() => addArrayItem('projects', { title: '', description: '', link: '' })}
       >
-        {(resume.projects || []).map((pr, i) => (
-          <RepeatItem key={`proj-${i}`} onRemove={() => removeArrayItem('projects', i)}>
+        {(resume.projects || []).map((pr) => (
+          <RepeatItem key={pr.id} onRemove={() => removeArrayItemById('projects', pr.id)}>
             <Grid>
-              <Input label="Title" value={pr.title} placeholder="Enter project title" onChange={(v) => updateArrayItem('projects', i, 'title', v)} />
-              <Input label="Link"  value={pr.link}  placeholder="Enter project link"  onChange={(v) => updateArrayItem('projects', i, 'link', v)} />
+              <Input label="Title" value={pr.title} placeholder="Enter project title" onChange={(v) => updateArrayItemById('projects', pr.id, 'title', v)} />
+              <Input label="Link"  value={pr.link}  placeholder="Enter project link"  onChange={(v) => updateArrayItemById('projects', pr.id, 'link', v)} />
             </Grid>
-            <Textarea label="Description" value={pr.description} placeholder="Describe your project..." onChange={(v) => updateArrayItem('projects', i, 'description', v)} rows={4} />
+            <Textarea label="Description" value={pr.description} placeholder="Describe your project..." onChange={(v) => updateArrayItemById('projects', pr.id, 'description', v)} rows={4} />
           </RepeatItem>
         ))}
       </Section>
 
-      {/* ── Skills ──────────────────────────────────────────── */}
+      {/* ── Skills ───────────────────────────────────────────── */}
       <Section title="Skills" onAdd={addSkill}>
-        {normalizedSkills.map((skill, i) => (
-          <RepeatItem key={`skill-${i}`} onRemove={() => removeSkill(i)}>
-            <Input label="Skill" value={skill.name} placeholder="Enter a skill" onChange={(v) => updateSkill(i, 'name', v)} />
-            <Textarea label="Description (optional)" value={skill.description} placeholder="Add a short description if you want..." onChange={(v) => updateSkill(i, 'description', v)} rows={3} />
+        {skillsWithIds.map((skill) => (
+          <RepeatItem key={skill.id} onRemove={() => removeSkill(skill.id)}>
+            <Input label="Skill / Category" value={skill.name} placeholder="E.g. Languages, React, Python…" onChange={(v) => updateSkill(skill.id, 'name', v)} />
+            <Textarea label="Description (optional)" value={skill.description} placeholder="Add a short description if you want..." onChange={(v) => updateSkill(skill.id, 'description', v)} rows={3} />
           </RepeatItem>
         ))}
       </Section>
 
-      {/* ── Custom sections ─────────────────────────────────── */}
+      {/* ── Custom sections ──────────────────────────────────── */}
       <Section
         title="Custom sections"
         onAdd={() => addArrayItem('customSections', { title: '', items: [] })}
       >
-        {(resume.customSections || []).map((sec, si) => (
-          <RepeatItem key={sec.id || `custom-${si}`} onRemove={() => removeArrayItemById('customSections', sec.id)}>
+        {(resume.customSections || []).map((sec) => (
+          <RepeatItem key={sec.id} onRemove={() => removeArrayItemById('customSections', sec.id)}>
             <Input
               label="Section title"
               value={sec.title}
               placeholder="E.g. Certifications, Languages…"
               onChange={(v) => updateArrayItemById('customSections', sec.id, 'title', v)}
             />
-
-            {/* items within this section */}
             <div className="space-y-2">
               {(sec.items || []).map((item) => (
                 <InnerItem
@@ -379,7 +331,7 @@ function ResumeForm({ resume, setResume }) {
               <button
                 type="button"
                 onClick={() => addCustomSectionItem(sec.id)}
-                className="mt-1 text-xs font-medium text-brand-500 hover:text-brand-700"
+                className="mt-1 text-xs font-medium text-slate-600 hover:text-slate-900"
               >
                 + Add item
               </button>
@@ -393,7 +345,7 @@ function ResumeForm({ resume, setResume }) {
 
 export default memo(ResumeForm);
 
-// ── layout helpers ────────────────────────────────────────────
+// ── Layout helpers ────────────────────────────────────────────────
 
 function Section({ title, children, onAdd }) {
   return (
@@ -401,7 +353,7 @@ function Section({ title, children, onAdd }) {
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-700">{title}</h3>
         {onAdd && (
-          <button type="button" onClick={onAdd} className="text-xs font-medium text-brand-500 hover:text-brand-700">
+          <button type="button" onClick={onAdd} className="text-xs font-medium text-slate-600 hover:text-slate-900">
             + Add
           </button>
         )}
@@ -431,7 +383,6 @@ const RepeatItem = memo(function RepeatItem({ children, onRemove }) {
   );
 });
 
-// Lighter inner item used inside custom sections
 function InnerItem({ children, onRemove }) {
   return (
     <div className="relative rounded border border-slate-200 bg-white p-3 pr-14">
@@ -457,7 +408,7 @@ const Input = memo(function Input({ label, value, onChange, placeholder }) {
         value={value || ''}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-100"
       />
     </label>
   );
@@ -472,7 +423,7 @@ const Textarea = memo(function Textarea({ label, value, onChange, rows = 3, plac
         value={value || ''}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+        className="w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-100"
       />
     </label>
   );
@@ -498,7 +449,7 @@ const DatePickerInput = memo(function DatePickerInput({ label, value, onChange, 
         autoComplete="off"
         popperPlacement="bottom-start"
         wrapperClassName="block w-full"
-        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-100"
       />
     </label>
   );

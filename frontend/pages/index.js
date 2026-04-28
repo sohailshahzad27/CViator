@@ -18,6 +18,7 @@ import { useRouter } from 'next/router';
 import { useAuth } from '../hooks/useAuth';
 import { loadCV, saveCV } from '../services/cv';
 import { API_URL, getToken } from '../services/api';
+import { uid } from '../utils/resume';
 
 const ResumeForm = dynamic(() => import('../components/ResumeForm'), {
   ssr: false,
@@ -29,10 +30,6 @@ const LivePreview = dynamic(() => import('../components/LivePreview'), {
 });
 
 const AUTOSAVE_DELAY_MS = 1500;
-
-function uid() {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
-}
 
 const EMPTY_RESUME = {
   name: '',
@@ -79,8 +76,9 @@ export default function Home() {
         if (cancelled) return;
         const merged = { ...EMPTY_RESUME, ...data };
         // Make sure repeating items have stable IDs (older saves may not).
-        merged.experience     = (merged.experience     || []).map((e) => e.id ? e : { ...e, id: uid() });
-        merged.education      = (merged.education      || []).map((e) => e.id ? e : { ...e, id: uid() });
+        merged.experience     = (merged.experience  || []).map((e) => e.id ? e : { ...e, id: uid() });
+        merged.education      = (merged.education   || []).map((e) => e.id ? e : { ...e, id: uid() });
+        merged.projects       = (merged.projects    || []).map((p) => p.id ? p : { ...p, id: uid() });
         merged.customSections = (merged.customSections || []).map((s) => ({
           ...s,
           id: s.id || uid(),

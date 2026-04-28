@@ -1,38 +1,22 @@
 // frontend/components/templates/TemplateModern.js
-// ---------------------------------------------------------------
-// Modern template — two columns. Sidebar carries the photo, contact
-// info and skills on a dark panel; main column carries experience,
-// education, projects, and custom sections.
-//
+// Modern template — two-column layout with a dark sidebar.
 // Mirrors backend/utils/generateHTML.js for PDF parity.
-// ---------------------------------------------------------------
 
 import { memo } from 'react';
 import { formatDateRange } from './dateRange';
+import {
+  sortByDateDesc,
+  normalizeSkills,
+  toExternalUrl,
+  stripProtocol,
+  getInitials,
+} from '../../utils/resume';
 
 const styles = {
   sidebarBg: '#1e293b',
   accent:    '#94a3b8',
   heading:   '#334155',
 };
-
-function sortByDateDesc(items = []) {
-  const now = Date.now();
-  const time = (v) => {
-    if (!v) return null;
-    const d = v instanceof Date ? v : new Date(v);
-    const t = d.getTime();
-    return Number.isFinite(t) ? t : null;
-  };
-  return [...items].sort((a, b) => {
-    const aTo = time(a?.to) ?? (a?.from ? now + 1 : 0);
-    const bTo = time(b?.to) ?? (b?.from ? now + 1 : 0);
-    if (aTo !== bTo) return bTo - aTo;
-    const aFrom = time(a?.from) ?? 0;
-    const bFrom = time(b?.from) ?? 0;
-    return bFrom - aFrom;
-  });
-}
 
 function markerText(index, style) {
   if (style === 'none') return null;
@@ -66,8 +50,6 @@ function TemplateModern({ resume }) {
         <h1 className="mt-5 text-[28px] font-bold leading-tight text-white">
           {r.name || 'Your Name'}
         </h1>
-
-        {/* Slightly bolder divider between name and contact info */}
         <div className="mt-3 border-b border-white/30" />
 
         <div className="mt-4 space-y-3.5 text-[11px]" style={{ color: styles.accent }}>
@@ -138,7 +120,7 @@ function TemplateModern({ resume }) {
 
         <Section title="Projects" accent={styles.heading}>
           {(r.projects || []).map((pr, i) => (
-            <div key={`proj-${i}`} className="flex items-start gap-3">
+            <div key={pr.id || `proj-${i}`} className="flex items-start gap-3">
               {markerText(i, marker) && (
                 <div className="min-w-[1.25rem] shrink-0 pt-0.5 text-xs font-semibold text-slate-500">
                   {markerText(i, marker)}
@@ -194,7 +176,7 @@ function TemplateModern({ resume }) {
 
 export default memo(TemplateModern);
 
-// ── sub-components ────────────────────────────────────────────
+// ── sub-components ────────────────────────────────────────────────
 
 function Section({ title, accent, children }) {
   return (
@@ -255,29 +237,4 @@ function MultilineText({ children, className = '' }) {
       {children}
     </p>
   );
-}
-
-function getInitials(name = '') {
-  const words = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
-  if (!words.length) return 'CP';
-  return words.map((w) => w[0].toUpperCase()).join('');
-}
-
-function toExternalUrl(value = '') {
-  if (!value) return '#';
-  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
-}
-
-function stripProtocol(value = '') {
-  return (value || '').replace(/^https?:\/\//i, '');
-}
-
-function normalizeSkills(skills = []) {
-  return (skills || [])
-    .map((s) => (
-      typeof s === 'string'
-        ? { name: s, description: '' }
-        : { name: s?.name || '', description: s?.description || '' }
-    ))
-    .filter((s) => s.name || s.description);
 }

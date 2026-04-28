@@ -1,22 +1,21 @@
 // backend/db/pool.js
-// ---------------------------------------------------------------
 // PostgreSQL connection pool. Single shared instance.
-// ---------------------------------------------------------------
 
 const { Pool } = require('pg');
+const { db } = require('../config');
 
 const pool = new Pool({
-  host:     process.env.DB_HOST     || 'localhost',
-  port:     Number(process.env.DB_PORT) || 5432,
-  user:     process.env.DB_USER     || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
-  database: process.env.DB_NAME     || 'cviator',
+  host:     db.host,
+  port:     db.port,
+  user:     db.user,
+  password: db.password,
+  database: db.database,
   max: 10,
   idleTimeoutMillis: 30000,
 });
 
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle Postgres client:', err);
+  console.error('[db] Unexpected idle client error:', err.message);
 });
 
 function query(text, params) {

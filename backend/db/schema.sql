@@ -1,11 +1,8 @@
 -- backend/db/schema.sql
--- ---------------------------------------------------------------
--- PostgreSQL schema for Cviator Pro.
--- Idempotent: safe to run on every startup.
+-- Idempotent: safe to run on every startup via initDatabase().
 --
 --   users    — one row per signed-up account
 --   cv_data  — one row per user (1:1), holding the full resume JSON
--- ---------------------------------------------------------------
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- gen_random_uuid()
 
@@ -14,9 +11,13 @@ CREATE TABLE IF NOT EXISTS users (
   email           TEXT NOT NULL UNIQUE,
   password_hash   TEXT NOT NULL,
   full_name       TEXT,
+  is_admin        BOOLEAN NOT NULL DEFAULT FALSE,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_login_at   TIMESTAMPTZ
 );
+
+-- Idempotently add is_admin to existing deployments that predate it.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS users_email_idx ON users (LOWER(email));
 
