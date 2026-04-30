@@ -1,20 +1,13 @@
 // frontend/hooks/useAuth.js
-// ---------------------------------------------------------------
-// React Context that exposes the current user + auth actions to
-// the entire app.
+// React Context that exposes the current user + auth actions to the app.
 //
-//   const { user, status, login, signup, logout } = useAuth();
+//   const { user, status, login, logout, setSession } = useAuth();
 //
-// status is one of:
-//   'loading'           — verifying token on first render
-//   'authenticated'     — user is known and logged in
-//   'unauthenticated'   — no valid session
-// ---------------------------------------------------------------
+// status: 'loading' | 'authenticated' | 'unauthenticated'
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import {
   login    as loginRequest,
-  signup   as signupRequest,
   logout   as logoutRequest,
   verify   as verifyRequest,
 } from '../services/auth';
@@ -26,7 +19,6 @@ export function AuthProvider({ children }) {
   const [user,   setUser]   = useState(null);
   const [status, setStatus] = useState('loading');
 
-  // On first mount, if a token exists, try to verify it.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -57,11 +49,11 @@ export function AuthProvider({ children }) {
     return u;
   }, []);
 
-  const signup = useCallback(async (creds) => {
-    const u = await signupRequest(creds);
+  // Used after an admin signs up — token + user come back immediately.
+  const setSession = useCallback((token, u) => {
+    setToken(token);
     setUser(u);
     setStatus('authenticated');
-    return u;
   }, []);
 
   const logout = useCallback(async () => {
@@ -71,7 +63,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, status, login, signup, logout }}>
+    <AuthContext.Provider value={{ user, status, login, logout, setSession }}>
       {children}
     </AuthContext.Provider>
   );

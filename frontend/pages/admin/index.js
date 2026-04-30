@@ -37,8 +37,8 @@ export default function AdminPage() {
   const [downloadingAll, setDownloadingAll] = useState(false);
 
   // Filters
-  const [filterOptions, setFilterOptions] = useState({ faculties: [], batches: [], departments: [] });
-  const [filters, setFilters] = useState({ role: '', faculty: '', batch: '', department: '', q: '' });
+  const [filterOptions, setFilterOptions] = useState({ faculties: [], batches: [] });
+  const [filters, setFilters] = useState({ role: '', faculty: '', batch: '', q: '' });
 
   // Auth gates: bounce non-admins to /, anonymous to /login
   useEffect(() => {
@@ -75,7 +75,7 @@ export default function AdminPage() {
     if (status !== 'authenticated' || !user?.isAdmin) return;
     const t = setTimeout(() => loadPage(1, filters), 300);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters]);
 
   const handleDownload = useCallback(async (u) => {
@@ -95,7 +95,7 @@ export default function AdminPage() {
   const handleDownloadAll = useCallback(async () => {
     setDownloadingAll(true);
     try {
-      await downloadAllCvs({ ...filters, template: 'classic' });
+      await downloadAllCvs({ role: filters.role, faculty: filters.faculty, batch: filters.batch, q: filters.q, template: 'classic' });
     } catch (err) {
       console.error('[admin] download-all failed:', err);
       alert(err.message || 'Could not download CVs.');
@@ -106,10 +106,7 @@ export default function AdminPage() {
 
   const setFilter = (key, value) => setFilters((f) => ({ ...f, [key]: value }));
 
-  const activeFilterCount = useMemo(
-    () => Object.values(filters).filter(Boolean).length,
-    [filters]
-  );
+  const activeFilterCount = useMemo(() => Object.values(filters).filter(Boolean).length, [filters]);
 
   if (status === 'loading') return <Shell user={user} onLogout={() => logout().then(() => router.replace('/login'))}><Spinner /></Shell>;
 
@@ -152,7 +149,7 @@ export default function AdminPage() {
       </div>
 
       {/* ── Filter bar ─────────────────────────────────────── */}
-      <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-5">
+      <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-4">
         <FilterInput
           placeholder="Search email / name / reg no"
           value={filters.q}
@@ -164,7 +161,6 @@ export default function AdminPage() {
           placeholder="All roles"
           options={[
             { value: 'student', label: 'Students' },
-            { value: 'faculty', label: 'Faculty'  },
             { value: 'admin',   label: 'Admins'   },
           ]}
         />
@@ -180,16 +176,10 @@ export default function AdminPage() {
           placeholder="All batches"
           options={filterOptions.batches.map((b) => ({ value: b, label: b }))}
         />
-        <FilterSelect
-          value={filters.department}
-          onChange={(v) => setFilter('department', v)}
-          placeholder="All departments"
-          options={filterOptions.departments.map((d) => ({ value: d, label: d }))}
-        />
         {activeFilterCount > 0 && (
           <button
             type="button"
-            onClick={() => setFilters({ role: '', faculty: '', batch: '', department: '', q: '' })}
+            onClick={() => setFilters({ role: '', faculty: '', batch: '', q: '' })}
             className="col-span-full text-left text-xs text-slate-500 underline hover:text-slate-900 sm:col-auto"
           >
             Clear filters
@@ -220,7 +210,7 @@ export default function AdminPage() {
                 <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                   <Th>Name / Email</Th>
                   <Th>Role</Th>
-                  <Th>Faculty / Dept</Th>
+                  <Th>Faculty</Th>
                   <Th>Batch / Reg</Th>
                   <Th>Joined</Th>
                   <Th><span className="sr-only">Actions</span></Th>
@@ -237,7 +227,7 @@ export default function AdminPage() {
                       <RoleBadge role={u.role} isAdmin={u.isAdmin} />
                     </Td>
                     <Td className="text-xs">
-                      {u.faculty || u.department || <span className="text-slate-400">—</span>}
+                      {u.faculty || <span className="text-slate-400">—</span>}
                     </Td>
                     <Td className="text-xs">
                       {u.batch ? `Batch ${u.batch}` : null}
@@ -354,9 +344,6 @@ function FilterSelect({ value, onChange, placeholder, options }) {
 function RoleBadge({ role, isAdmin }) {
   if (isAdmin || role === 'admin') {
     return <span className="inline-block rounded bg-slate-900 px-1.5 py-0.5 text-[11px] font-semibold text-white">Admin</span>;
-  }
-  if (role === 'faculty') {
-    return <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">Faculty</span>;
   }
   return <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700">Student</span>;
 }

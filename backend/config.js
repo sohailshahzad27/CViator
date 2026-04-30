@@ -19,8 +19,6 @@ module.exports = {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   },
 
-  // Shared secret required to register an account with role = 'admin'.
-  // Anyone signing up as admin must provide this code.
   adminSignupCode: process.env.ADMIN_SIGNUP_CODE || 'CVIATOR-ADMIN-2026',
 
   db: {
@@ -29,5 +27,13 @@ module.exports = {
     user:     process.env.DB_USER     || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres',
     database: process.env.DB_NAME     || 'cviator',
+  },
+
+  smtp: {
+    host: process.env.SMTP_HOST || '',
+    port: process.env.SMTP_PORT || 587,
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || '',
+    from: process.env.SMTP_FROM || 'noreply@cviator.local',
   },
 };

@@ -1,7 +1,5 @@
 // frontend/pages/login.js
-// ---------------------------------------------------------------
 // Email + password sign-in. Redirects to / on success.
-// ---------------------------------------------------------------
 
 import { useEffect, useState } from 'react';
 import Head from 'next/head';
@@ -17,6 +15,8 @@ export default function LoginPage() {
   const [error,    setError]    = useState('');
   const [busy,     setBusy]     = useState(false);
 
+  const verified = router.query.verified === '1';
+
   useEffect(() => {
     if (status === 'authenticated') {
       router.replace(user?.isAdmin ? '/admin' : '/');
@@ -31,6 +31,10 @@ export default function LoginPage() {
       const u = await login({ email: email.trim(), password });
       router.replace(u?.isAdmin ? '/admin' : '/');
     } catch (err) {
+      if (err.needsVerification) {
+        router.replace(`/verify-email?email=${encodeURIComponent(email.trim())}`);
+        return;
+      }
       setError(err.message || 'Could not log in.');
     } finally {
       setBusy(false);
@@ -41,6 +45,11 @@ export default function LoginPage() {
     <>
       <Head><title>Sign in — Cviator Pro</title></Head>
       <AuthShell title="Welcome back" subtitle="Sign in to keep building your resume.">
+        {verified && (
+          <div className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            Email verified! You can now sign in.
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="space-y-4">
           <Field
             label="Email"
@@ -69,12 +78,17 @@ export default function LoginPage() {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
-        <p className="mt-5 text-center text-sm text-slate-500">
-          New here?{' '}
-          <Link href="/signup" className="font-medium text-slate-900 hover:underline">
-            Create an account
+        <div className="mt-5 flex flex-col items-center gap-2 text-sm text-slate-500">
+          <Link href="/forgot-password" className="hover:text-slate-700 hover:underline">
+            Forgot your password?
           </Link>
-        </p>
+          <span>
+            New here?{' '}
+            <Link href="/signup" className="font-medium text-slate-900 hover:underline">
+              Create an account
+            </Link>
+          </span>
+        </div>
       </AuthShell>
     </>
   );

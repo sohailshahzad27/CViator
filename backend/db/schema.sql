@@ -29,18 +29,27 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name   TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS reg_no      TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS faculty     TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS batch       TEXT;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS department  TEXT;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS designation TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Constrain role to known values (drop-and-add keeps it idempotent).
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD  CONSTRAINT users_role_check
-  CHECK (role IN ('student', 'faculty', 'admin'));
+  CHECK (role IN ('student', 'admin'));
 
 CREATE INDEX IF NOT EXISTS users_email_idx   ON users (LOWER(email));
 CREATE INDEX IF NOT EXISTS users_faculty_idx ON users (faculty);
 CREATE INDEX IF NOT EXISTS users_batch_idx   ON users (batch);
 CREATE INDEX IF NOT EXISTS users_role_idx    ON users (role);
+
+CREATE TABLE IF NOT EXISTS verification_tokens (
+  token       TEXT PRIMARY KEY,
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type        TEXT NOT NULL CHECK (type IN ('email_verify', 'password_reset')),
+  expires_at  TIMESTAMPTZ NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS verification_tokens_user_idx ON verification_tokens (user_id, type);
 
 CREATE TABLE IF NOT EXISTS cv_data (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
