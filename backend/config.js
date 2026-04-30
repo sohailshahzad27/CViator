@@ -3,12 +3,12 @@
 // Every module reads from here instead of calling process.env directly.
 
 require('dotenv').config();
-console.log("DB CONFIG DEBUG:", {
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-});
+// console.log("DB CONFIG DEBUG:", {
+//   host: process.env.DB_HOST,
+//   user: process.env.DB_USER,
+//   password: process.env.DB_PASSWORD,
+//   database: process.env.DB_NAME,
+// });
 
 module.exports = {
   port: Number(process.env.PORT) || 5000,

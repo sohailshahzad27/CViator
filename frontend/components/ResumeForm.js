@@ -19,6 +19,29 @@ const MARKER_OPTIONS = [
   { value: 'none',   label: 'None'  },
 ];
 
+// Hard input caps. These match the render-side trim() values in
+// TemplateClassic.js / generateHTML.js so what you type is what you see.
+const LIMITS = {
+  name:        80,
+  email:       120,
+  phone:       30,
+  location:    160,
+  socialLink:  120,
+  summary:     420,
+  company:     80,
+  role:        80,
+  school:      120,
+  degree:      120,
+  projectTitle:80,
+  projectLink: 160,
+  description: 280,    // experience / project descriptions
+  skillName:   60,
+  skillDesc:   160,
+  customTitle: 60,
+  customName:  80,
+  customDesc:  180,
+};
+
 // Ensure every skill has an id (normalizeSkills from utils strips them).
 function ensureSkillIds(skills = []) {
   return (skills || []).map((s) =>
@@ -207,10 +230,10 @@ function ResumeForm({ resume, setResume }) {
 
           <div className="flex-1">
             <Grid>
-              <Input label="Full name"  value={resume.name}     placeholder="Enter your full name"     onChange={(v) => updateField('name', v)} />
-              <Input label="Email"      value={resume.email}    placeholder="Enter your email address" onChange={(v) => updateField('email', v)} />
-              <Input label="Phone"      value={resume.phone}    placeholder="Enter your phone number"  onChange={(v) => updateField('phone', v)} />
-              <Input label="Location"   value={resume.location} placeholder="Enter your location"      onChange={(v) => updateField('location', v)} />
+              <Input label="Full name"  value={resume.name}     placeholder="Enter your full name"     onChange={(v) => updateField('name', v)}     maxLength={LIMITS.name} />
+              <Input label="Email"      value={resume.email}    placeholder="Enter your email address" onChange={(v) => updateField('email', v)}    maxLength={LIMITS.email} />
+              <Input label="Phone"      value={resume.phone}    placeholder="Enter your phone number"  onChange={(v) => updateField('phone', v)}    maxLength={LIMITS.phone} />
+              <Input label="Location"   value={resume.location} placeholder="Enter your location"      onChange={(v) => updateField('location', v)} maxLength={LIMITS.location} />
             </Grid>
           </div>
         </div>
@@ -219,14 +242,15 @@ function ResumeForm({ resume, setResume }) {
       {/* ── Social links ─────────────────────────────────────── */}
       <Section title="Social links">
         <Grid>
-          <Input label="LinkedIn URL" value={resume.linkedin} placeholder="linkedin.com/in/your-name" onChange={(v) => updateField('linkedin', v)} />
-          <Input label="GitHub URL"   value={resume.github}   placeholder="github.com/your-name"       onChange={(v) => updateField('github', v)} />
+          <Input label="LinkedIn URL" value={resume.linkedin} placeholder="linkedin.com/in/your-name" onChange={(v) => updateField('linkedin', v)} maxLength={LIMITS.socialLink} />
+          <Input label="GitHub URL"   value={resume.github}   placeholder="github.com/your-name"       onChange={(v) => updateField('github', v)}   maxLength={LIMITS.socialLink} />
+          <Input label="Others (URL)" value={resume.others}   placeholder="portfolio.example.com"      onChange={(v) => updateField('others', v)}   maxLength={LIMITS.socialLink} />
         </Grid>
       </Section>
 
       {/* ── Summary ──────────────────────────────────────────── */}
       <Section title="Professional summary">
-        <Textarea value={resume.summary} onChange={(v) => updateField('summary', v)} rows={4} placeholder="Write a short professional summary..." />
+        <Textarea value={resume.summary} onChange={(v) => updateField('summary', v)} rows={4} placeholder="Write a short professional summary..." maxLength={LIMITS.summary} />
       </Section>
 
       {/* ── Experience ───────────────────────────────────────── */}
@@ -237,14 +261,14 @@ function ResumeForm({ resume, setResume }) {
         {sortedExperience.map((ex) => (
           <RepeatItem key={ex.id} onRemove={() => removeArrayItemById('experience', ex.id)}>
             <Grid>
-              <Input label="Company" value={ex.company} placeholder="Enter company name" onChange={(v) => updateArrayItemById('experience', ex.id, 'company', v)} />
-              <Input label="Role"    value={ex.role}    placeholder="Enter your role"    onChange={(v) => updateArrayItemById('experience', ex.id, 'role', v)} />
+              <Input label="Company" value={ex.company} placeholder="Enter company name" onChange={(v) => updateArrayItemById('experience', ex.id, 'company', v)} maxLength={LIMITS.company} />
+              <Input label="Role"    value={ex.role}    placeholder="Enter your role"    onChange={(v) => updateArrayItemById('experience', ex.id, 'role', v)}    maxLength={LIMITS.role} />
             </Grid>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <DatePickerInput label="From" value={ex.from} onChange={(v) => updateArrayItemById('experience', ex.id, 'from', v)} placeholder="Select start date" />
               <DatePickerInput label="To"   value={ex.to}   onChange={(v) => updateArrayItemById('experience', ex.id, 'to', v)}   placeholder="Present if blank" isClearable />
             </div>
-            <Textarea label="Description" value={ex.description} placeholder="Describe your experience..." onChange={(v) => updateArrayItemById('experience', ex.id, 'description', v)} rows={4} />
+            <Textarea label="Description" value={ex.description} placeholder="Describe your experience..." onChange={(v) => updateArrayItemById('experience', ex.id, 'description', v)} rows={4} maxLength={LIMITS.description} />
           </RepeatItem>
         ))}
       </Section>
@@ -257,8 +281,8 @@ function ResumeForm({ resume, setResume }) {
         {sortedEducation.map((ed) => (
           <RepeatItem key={ed.id} onRemove={() => removeArrayItemById('education', ed.id)}>
             <Grid>
-              <Input label="School" value={ed.school} placeholder="Enter school name"       onChange={(v) => updateArrayItemById('education', ed.id, 'school', v)} />
-              <Input label="Degree" value={ed.degree} placeholder="Enter degree or program" onChange={(v) => updateArrayItemById('education', ed.id, 'degree', v)} />
+              <Input label="School" value={ed.school} placeholder="Enter school name"       onChange={(v) => updateArrayItemById('education', ed.id, 'school', v)} maxLength={LIMITS.school} />
+              <Input label="Degree" value={ed.degree} placeholder="Enter degree or program" onChange={(v) => updateArrayItemById('education', ed.id, 'degree', v)} maxLength={LIMITS.degree} />
             </Grid>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <DatePickerInput label="From" value={ed.from} onChange={(v) => updateArrayItemById('education', ed.id, 'from', v)} placeholder="Select start date" />
@@ -276,10 +300,10 @@ function ResumeForm({ resume, setResume }) {
         {(resume.projects || []).map((pr) => (
           <RepeatItem key={pr.id} onRemove={() => removeArrayItemById('projects', pr.id)}>
             <Grid>
-              <Input label="Title" value={pr.title} placeholder="Enter project title" onChange={(v) => updateArrayItemById('projects', pr.id, 'title', v)} />
-              <Input label="Link"  value={pr.link}  placeholder="Enter project link"  onChange={(v) => updateArrayItemById('projects', pr.id, 'link', v)} />
+              <Input label="Title" value={pr.title} placeholder="Enter project title" onChange={(v) => updateArrayItemById('projects', pr.id, 'title', v)} maxLength={LIMITS.projectTitle} />
+              <Input label="Link"  value={pr.link}  placeholder="Enter project link"  onChange={(v) => updateArrayItemById('projects', pr.id, 'link', v)}  maxLength={LIMITS.projectLink} />
             </Grid>
-            <Textarea label="Description" value={pr.description} placeholder="Describe your project..." onChange={(v) => updateArrayItemById('projects', pr.id, 'description', v)} rows={4} />
+            <Textarea label="Description" value={pr.description} placeholder="Describe your project..." onChange={(v) => updateArrayItemById('projects', pr.id, 'description', v)} rows={4} maxLength={LIMITS.description} />
           </RepeatItem>
         ))}
       </Section>
@@ -288,8 +312,8 @@ function ResumeForm({ resume, setResume }) {
       <Section title="Skills" onAdd={addSkill}>
         {skillsWithIds.map((skill) => (
           <RepeatItem key={skill.id} onRemove={() => removeSkill(skill.id)}>
-            <Input label="Skill / Category" value={skill.name} placeholder="E.g. Languages, React, Python…" onChange={(v) => updateSkill(skill.id, 'name', v)} />
-            <Textarea label="Description (optional)" value={skill.description} placeholder="Add a short description if you want..." onChange={(v) => updateSkill(skill.id, 'description', v)} rows={3} />
+            <Input label="Skill / Category" value={skill.name} placeholder="E.g. Languages, React, Python…" onChange={(v) => updateSkill(skill.id, 'name', v)} maxLength={LIMITS.skillName} />
+            <Textarea label="Description (optional)" value={skill.description} placeholder="Add a short description if you want..." onChange={(v) => updateSkill(skill.id, 'description', v)} rows={3} maxLength={LIMITS.skillDesc} />
           </RepeatItem>
         ))}
       </Section>
@@ -306,6 +330,7 @@ function ResumeForm({ resume, setResume }) {
               value={sec.title}
               placeholder="E.g. Certifications, Languages…"
               onChange={(v) => updateArrayItemById('customSections', sec.id, 'title', v)}
+              maxLength={LIMITS.customTitle}
             />
             <div className="space-y-2">
               {(sec.items || []).map((item) => (
@@ -318,6 +343,7 @@ function ResumeForm({ resume, setResume }) {
                     value={item.name}
                     placeholder="Item name"
                     onChange={(v) => updateCustomSectionItem(sec.id, item.id, 'name', v)}
+                    maxLength={LIMITS.customName}
                   />
                   <Textarea
                     label="Description (optional)"
@@ -325,6 +351,7 @@ function ResumeForm({ resume, setResume }) {
                     placeholder="Add a short description if you want…"
                     onChange={(v) => updateCustomSectionItem(sec.id, item.id, 'description', v)}
                     rows={2}
+                    maxLength={LIMITS.customDesc}
                   />
                 </InnerItem>
               ))}
@@ -399,30 +426,56 @@ function InnerItem({ children, onRemove }) {
   );
 }
 
-const Input = memo(function Input({ label, value, onChange, placeholder }) {
+const Input = memo(function Input({ label, value, onChange, placeholder, maxLength }) {
+  const v = value || '';
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-slate-600">{label}</span>
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-xs font-medium text-slate-600">{label}</span>
+        {maxLength && (
+          <span
+            className={`text-[10px] tabular-nums ${
+              v.length >= maxLength ? 'text-red-500' : 'text-slate-400'
+            }`}
+          >
+            {v.length}/{maxLength}
+          </span>
+        )}
+      </div>
       <input
         type="text"
-        value={value || ''}
+        value={v}
         placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
+        maxLength={maxLength}
+        onChange={(e) => onChange(maxLength ? e.target.value.slice(0, maxLength) : e.target.value)}
         className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-100"
       />
     </label>
   );
 });
 
-const Textarea = memo(function Textarea({ label, value, onChange, rows = 3, placeholder }) {
+const Textarea = memo(function Textarea({ label, value, onChange, rows = 3, placeholder, maxLength }) {
+  const v = value || '';
   return (
     <label className="block">
-      {label && <span className="mb-1 block text-xs font-medium text-slate-600">{label}</span>}
+      <div className="mb-1 flex items-center justify-between">
+        {label ? <span className="text-xs font-medium text-slate-600">{label}</span> : <span />}
+        {maxLength && (
+          <span
+            className={`text-[10px] tabular-nums ${
+              v.length >= maxLength ? 'text-red-500' : 'text-slate-400'
+            }`}
+          >
+            {v.length}/{maxLength}
+          </span>
+        )}
+      </div>
       <textarea
         rows={rows}
-        value={value || ''}
+        value={v}
         placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
+        maxLength={maxLength}
+        onChange={(e) => onChange(maxLength ? e.target.value.slice(0, maxLength) : e.target.value)}
         className="w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-100"
       />
     </label>

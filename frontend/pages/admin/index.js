@@ -12,7 +12,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { useAuth } from '../../hooks/useAuth';
 import {
-  fetchUsers, fetchUser, fetchFilters, downloadUserPdf, downloadAllCvs,
+  fetchUsers, fetchFilters, downloadUserPdf, downloadAllCvs,
 } from '../../services/admin';
 
 // ── helpers ───────────────────────────────────────────────────────
@@ -21,14 +21,6 @@ function fmtDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
-  });
-}
-
-function fmtDateTime(iso) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('en-GB', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
   });
 }
 
@@ -41,8 +33,6 @@ export default function AdminPage() {
   const [state,    setState]    = useState('loading');  // loading | forbidden | error | ready
   const [users,    setUsers]    = useState([]);
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
-  const [selected, setSelected] = useState(null);
-  const [loadingDetail, setLoadingDetail] = useState(false);
   const [downloadingId, setDownloadingId] = useState(null);
   const [downloadingAll, setDownloadingAll] = useState(false);
 
@@ -58,7 +48,6 @@ export default function AdminPage() {
 
   const loadPage = useCallback(async (page = 1, override = filters) => {
     setState('loading');
-    setSelected(null);
     try {
       const data = await fetchUsers({ page, ...override });
       setUsers(data.users);
@@ -88,22 +77,6 @@ export default function AdminPage() {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters]);
-
-  const handleSelectUser = useCallback(async (userId) => {
-    if (selected?.user?.id === userId) {
-      setSelected(null);
-      return;
-    }
-    setLoadingDetail(true);
-    try {
-      const data = await fetchUser(userId);
-      setSelected(data);
-    } catch (err) {
-      console.error('[admin] fetch user detail failed:', err);
-    } finally {
-      setLoadingDetail(false);
-    }
-  }, [selected]);
 
   const handleDownload = useCallback(async (u) => {
     setDownloadingId(u.id);
@@ -254,50 +227,42 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {users.map((u) => {
-                  const isActive = selected?.user?.id === u.id;
-                  return (
-                    <tr key={u.id} className={`transition-colors ${isActive ? 'bg-slate-50' : 'hover:bg-slate-50'}`}>
-                      <Td>
-                        <div className="font-medium text-slate-900">{u.fullName || '—'}</div>
-                        <div className="text-xs text-slate-500">{u.email}</div>
-                      </Td>
-                      <Td>
-                        <RoleBadge role={u.role} isAdmin={u.isAdmin} />
-                      </Td>
-                      <Td className="text-xs">
-                        {u.faculty || u.department || <span className="text-slate-400">—</span>}
-                      </Td>
-                      <Td className="text-xs">
-                        {u.batch ? `Batch ${u.batch}` : null}
-                        {u.regNo  ? <div className="text-slate-500">{u.regNo}</div> : null}
-                        {!u.batch && !u.regNo && <span className="text-slate-400">—</span>}
-                      </Td>
-                      <Td className="text-xs text-slate-600">{fmtDate(u.createdAt)}</Td>
-                      <Td>
-                        <div className="flex justify-end gap-2 whitespace-nowrap">
-                          {!u.isAdmin && (
-                            <button
-                              type="button"
-                              onClick={() => handleDownload(u)}
-                              disabled={downloadingId === u.id}
-                              className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:opacity-60"
-                            >
-                              {downloadingId === u.id ? 'Generating…' : 'Download PDF'}
-                            </button>
-                          )}
+                {users.map((u) => (
+                  <tr key={u.id} className="transition-colors hover:bg-slate-50">
+                    <Td>
+                      <div className="font-medium text-slate-900">{u.fullName || '—'}</div>
+                      <div className="text-xs text-slate-500">{u.email}</div>
+                    </Td>
+                    <Td>
+                      <RoleBadge role={u.role} isAdmin={u.isAdmin} />
+                    </Td>
+                    <Td className="text-xs">
+                      {u.faculty || u.department || <span className="text-slate-400">—</span>}
+                    </Td>
+                    <Td className="text-xs">
+                      {u.batch ? `Batch ${u.batch}` : null}
+                      {u.regNo  ? <div className="text-slate-500">{u.regNo}</div> : null}
+                      {!u.batch && !u.regNo && <span className="text-slate-400">—</span>}
+                    </Td>
+                    <Td className="text-xs text-slate-600">{fmtDate(u.createdAt)}</Td>
+                    <Td>
+                      <div className="flex justify-end whitespace-nowrap">
+                        {!u.isAdmin ? (
                           <button
                             type="button"
-                            onClick={() => handleSelectUser(u.id)}
-                            className="text-xs text-slate-500 hover:text-slate-900"
+                            onClick={() => handleDownload(u)}
+                            disabled={downloadingId === u.id}
+                            className="rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:opacity-60"
                           >
-                            {isActive ? 'Close' : 'View CV'}
+                            {downloadingId === u.id ? 'Generating…' : 'Download PDF'}
                           </button>
-                        </div>
-                      </Td>
-                    </tr>
-                  );
-                })}
+                        ) : (
+                          <span className="text-xs text-slate-400">—</span>
+                        )}
+                      </div>
+                    </Td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -322,100 +287,9 @@ export default function AdminPage() {
             </div>
           )}
 
-          {(loadingDetail || selected) && (
-            <div className="mt-6 rounded-lg border border-slate-200 bg-white p-6">
-              {loadingDetail ? <Spinner /> : <CVDetail user={selected.user} cv={selected.cv} onDownload={() => handleDownload(selected.user)} downloading={downloadingId === selected.user.id} />}
-            </div>
-          )}
         </>
       )}
     </Shell>
-  );
-}
-
-// ── CV detail panel ───────────────────────────────────────────────
-
-function CVDetail({ user, cv, onDownload, downloading }) {
-  const d = cv?.data || {};
-  const sectionCount = (arr) => (arr || []).length;
-
-  return (
-    <div>
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-semibold text-slate-900">{user.fullName || user.email}</p>
-          <p className="mt-0.5 text-xs text-slate-500">{user.email}</p>
-          <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
-            {user.role && <RoleBadge role={user.role} isAdmin={user.isAdmin} />}
-            {user.faculty    && <Pill>{user.faculty}</Pill>}
-            {user.batch      && <Pill>Batch {user.batch}</Pill>}
-            {user.regNo      && <Pill>{user.regNo}</Pill>}
-            {user.department && <Pill>{user.department}</Pill>}
-            {user.designation && <Pill>{user.designation}</Pill>}
-          </div>
-        </div>
-        <div className="text-right">
-          {cv?.updatedAt && <p className="text-xs text-slate-400">Saved {fmtDateTime(cv.updatedAt)}</p>}
-          {!user.isAdmin && (
-            <button
-              type="button"
-              onClick={onDownload}
-              disabled={downloading}
-              className="mt-1 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800 disabled:opacity-60"
-            >
-              {downloading ? 'Generating…' : 'Download CV PDF'}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {!cv || !Object.keys(d).length ? (
-        <Empty text="This user has not saved any CV data yet." />
-      ) : (
-        <div className="space-y-5">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatCard label="Experience entries" value={sectionCount(d.experience)} />
-            <StatCard label="Education entries"  value={sectionCount(d.education)}  />
-            <StatCard label="Projects"           value={sectionCount(d.projects)}   />
-            <StatCard label="Skills"             value={sectionCount(d.skills)}     />
-          </div>
-
-          {(d.experience || []).length > 0 && (
-            <InfoSection title="Experience">
-              {d.experience.map((ex, i) => (
-                <div key={i} className="text-xs text-slate-700">
-                  <span className="font-medium">{ex.company || '—'}</span>
-                  {ex.role && <span className="text-slate-500"> · {ex.role}</span>}
-                </div>
-              ))}
-            </InfoSection>
-          )}
-
-          {(d.education || []).length > 0 && (
-            <InfoSection title="Education">
-              {d.education.map((ed, i) => (
-                <div key={i} className="text-xs text-slate-700">
-                  <span className="font-medium">{ed.school || '—'}</span>
-                  {ed.degree && <span className="text-slate-500"> · {ed.degree}</span>}
-                </div>
-              ))}
-            </InfoSection>
-          )}
-
-          {(d.skills || []).length > 0 && (
-            <InfoSection title="Skills">
-              <div className="flex flex-wrap gap-1.5">
-                {d.skills.map((s, i) => (
-                  <span key={i} className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-                    {typeof s === 'string' ? s : s.name}
-                  </span>
-                ))}
-              </div>
-            </InfoSection>
-          )}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -487,10 +361,6 @@ function RoleBadge({ role, isAdmin }) {
   return <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700">Student</span>;
 }
 
-function Pill({ children }) {
-  return <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600">{children}</span>;
-}
-
 function Th({ children }) {
   return <th className="px-4 py-3 text-left">{children}</th>;
 }
@@ -509,24 +379,6 @@ function PaginationBtn({ children, onClick, disabled }) {
     >
       {children}
     </button>
-  );
-}
-
-function StatCard({ label, value }) {
-  return (
-    <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-center">
-      <div className="text-xl font-bold text-slate-900">{value}</div>
-      <div className="mt-0.5 text-[11px] text-slate-500">{label}</div>
-    </div>
-  );
-}
-
-function InfoSection({ title, children }) {
-  return (
-    <div>
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{title}</p>
-      <div className="space-y-1">{children}</div>
-    </div>
   );
 }
 

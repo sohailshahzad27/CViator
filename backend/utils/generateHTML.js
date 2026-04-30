@@ -133,6 +133,31 @@ function renderCustomSections(customSections, accent, marker) {
   }).join('');
 }
 
+// ── Inline-SVG icons (12×12, currentColor). Kept identical to the
+//    icons used in frontend/components/templates/TemplateClassic.js
+//    so the PDF matches the live preview pixel-for-pixel. ─────────
+const ICON_STROKE = `width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;vertical-align:-2px;margin-right:6px"`;
+const ICON_FILL   = `width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0;vertical-align:-2px;margin-right:6px"`;
+
+const ICON_EMAIL   = `<svg ${ICON_STROKE}><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>`;
+const ICON_PHONE   = `<svg ${ICON_STROKE}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.37 1.9.72 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0 1 22 16.92z"/></svg>`;
+const ICON_ADDRESS = `<svg ${ICON_STROKE}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`;
+const ICON_GLOBE   = `<svg ${ICON_STROKE}><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/></svg>`;
+const ICON_LINKEDIN = `<svg ${ICON_FILL}><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.45-2.13 2.95v5.66H9.36V9h3.41v1.56h.05c.48-.91 1.65-1.85 3.4-1.85 3.63 0 4.3 2.39 4.3 5.5v6.24zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z"/></svg>`;
+const ICON_GITHUB   = `<svg ${ICON_FILL}><path d="M12 .3a12 12 0 0 0-3.79 23.4c.6.11.82-.26.82-.58v-2.2c-3.34.73-4.04-1.42-4.04-1.42-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.74.08-.74 1.21.09 1.85 1.24 1.85 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.66-.3-5.46-1.33-5.46-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.18 0 0 1.01-.32 3.31 1.23a11.5 11.5 0 0 1 6.02 0c2.3-1.55 3.31-1.23 3.31-1.23.65 1.66.24 2.88.11 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .3"/></svg>`;
+
+function pickLinkIcon(url = '') {
+  const u = String(url).toLowerCase();
+  if (u.includes('linkedin')) return ICON_LINKEDIN;
+  if (u.includes('github'))   return ICON_GITHUB;
+  return ICON_GLOBE;
+}
+
+function contactLine(icon, text) {
+  if (!text) return '';
+  return `<div class="cls-contact-line">${icon}<span>${esc(text)}</span></div>`;
+}
+
 function classicTemplate(d) {
   // Render-only caps; full data stays in DB.
   const MAX_SKILLS     = 8;
@@ -158,11 +183,23 @@ function classicTemplate(d) {
   const projects   = sortByDateDesc(d.projects || []).slice(0, MAX_PROJECTS);
   const finalYear  = projects[0];
   const academic   = projects.slice(1);
+  const markerStyle = d.markerStyle === 'dot' || d.markerStyle === 'none' ? d.markerStyle : 'number';
+
+  // Marker-aware list helpers (mirror MarkerList / MarkerItem in TemplateClassic.js).
+  const renderList = (items) => {
+    if (markerStyle === 'none') {
+      return items.map((html) => `<div class="cls-row-item">${html}</div>`).join('');
+    }
+    const tag = markerStyle === 'dot' ? 'ul' : 'ol';
+    const listStyle = markerStyle === 'dot' ? 'list-style:disc;padding-left:14px' : 'list-style:decimal;padding-left:18px';
+    return `<${tag} class="cls-bullets" style="${listStyle}">${items.map((html) => `<li>${html}</li>`).join('')}</${tag}>`;
+  };
 
   const customs   = d.customSections || [];
   const isAwards  = (s) => /award|achievement|honor/i.test(s?.title || '');
   const awards    = customs.filter(isAwards);
   const otherCustom = customs.filter((s) => !isAwards(s));
+  const EMPTY = `<span style="color:#bbb;font-style:italic">—</span>`;
 
   const addressLines = String(d.location || '')
     .split(/\r?\n|,\s*/)
@@ -197,9 +234,9 @@ function classicTemplate(d) {
           ${dateRange ? `<div class="cls-entry-meta"><div>${esc(dateRange)}</div></div>` : ''}
         </div>
         ${lines.length > 1
-          ? `<ul class="cls-bullets">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`
+          ? renderList(lines.map((l) => esc(l)))
           : lines.length === 1 ? `<p class="cls-body">${esc(lines[0])}</p>` : ''}
-        ${pr.link ? `<a class="cls-link" href="${esc(toExternalUrl(pr.link))}">${esc(stripProtocol(pr.link))}</a>` : ''}
+        ${pr.link ? `<a class="cls-link" href="${esc(toExternalUrl(pr.link))}">${pickLinkIcon(pr.link)}<span>${esc(stripProtocol(pr.link))}</span></a>` : ''}
       </div>`;
   };
 
@@ -221,26 +258,33 @@ function classicTemplate(d) {
     )
   ).join('');
 
-  const skillsHtml = skillsList.map((s) => `
-    <li>
-      ${s.name ? `<strong>${esc(s.name)}</strong>` : ''}
-      ${s.name && s.description ? ': ' : ''}
-      ${s.description ? esc(trim(s.description, MAX_SKILL_DESC)) : ''}
-    </li>`).join('');
+  const skillsHtml = renderList(skillsList.map((s) => `
+    ${s.name ? `<strong>${esc(s.name)}</strong>` : ''}${s.name && s.description ? ': ' : ''}${s.description ? esc(trim(s.description, MAX_SKILL_DESC)) : ''}
+  `.trim()));
 
-  const renderAwardOrCustom = (sec, fallbackTitle) => {
+  // Aggregate ALL award sections into a single list (so the "Awards &
+  // Achievements" row is always rendered, even with multiple sources).
+  const awardItems = awards.flatMap((sec) => {
+    const items = sec?.items || [];
+    if (items.length) return items.map((it) => ({ name: it.name, description: it.description }));
+    return toLines(sec?.content).map((line) => ({ name: '', description: line }));
+  });
+  const awardsHtml = awardItems.length
+    ? renderList(awardItems.map((it) => `
+        ${it.name ? `<strong>${esc(it.name)}</strong>` : ''}${it.name && it.description ? ' — ' : ''}${it.description ? esc(trim(it.description, MAX_AW_DESC)) : ''}
+      `.trim()))
+    : EMPTY;
+
+  const renderTrailingCustom = (sec) => {
     const items = sec?.items || [];
     const legacy = !items.length && sec?.content ? toLines(sec.content) : [];
     if (!items.length && !legacy.length) return '';
-    const body = items.length
-      ? items.map((it) => `
-          <li>
-            ${it.name ? `<strong>${esc(it.name)}</strong>` : ''}
-            ${it.name && it.description ? ' — ' : ''}
-            ${it.description ? esc(trim(it.description, MAX_AW_DESC)) : ''}
-          </li>`).join('')
-      : legacy.map((l) => `<li>${esc(trim(l, MAX_AW_DESC))}</li>`).join('');
-    return row(fallbackTitle || sec.title || 'Custom', `<ul class="cls-bullets">${body}</ul>`);
+    const html = items.length
+      ? renderList(items.map((it) => `
+          ${it.name ? `<strong>${esc(it.name)}</strong>` : ''}${it.name && it.description ? ' — ' : ''}${it.description ? esc(trim(it.description, MAX_AW_DESC)) : ''}
+        `.trim()))
+      : renderList(legacy.map((l) => esc(trim(l, MAX_AW_DESC))));
+    return row(esc(sec.title || 'Custom'), html);
   };
 
   const row = (label, content) => `
@@ -255,29 +299,33 @@ function classicTemplate(d) {
         <div class="cls-header-left">
           <div class="cls-name">${esc(d.name || 'Your Name')}</div>
           <div class="cls-contact">
-            ${d.email ? `<div>${esc(d.email)}</div>` : ''}
-            ${d.phone ? `<div>${esc(d.phone)}</div>` : ''}
-            ${(d.linkedin || d.github) ? `<div>${
-              [stripProtocol(d.linkedin), stripProtocol(d.github)].filter(Boolean).map(esc).join('  |  ')
-            }</div>` : ''}
+            ${contactLine(ICON_EMAIL,    d.email)}
+            ${contactLine(ICON_PHONE,    d.phone)}
+            ${contactLine(ICON_LINKEDIN, stripProtocol(d.linkedin))}
+            ${contactLine(ICON_GITHUB,   stripProtocol(d.github))}
+            ${contactLine(ICON_GLOBE,    stripProtocol(d.others))}
             ${addressLines.length ? `
-              <div class="cls-address">
-                <div><strong>Address</strong></div>
-                ${addressLines.map((l) => `<div>${esc(l)}</div>`).join('')}
+              <div class="cls-address-line">
+                ${ICON_ADDRESS}
+                <div>${addressLines.map((l) => `<div>${esc(l)}</div>`).join('')}</div>
               </div>` : ''}
           </div>
         </div>
         ${photo}
       </header>
 
-      ${d.summary ? row('Objective', `<p class="cls-body">${esc(trim(d.summary, MAX_SUMMARY))}</p>`) : ''}
-      ${educationHtml  ? row('Education', educationHtml) : ''}
-      ${experienceHtml ? row('Work<br/>Experience', experienceHtml) : ''}
-      ${finalYear      ? row('Final Year<br/>Project', renderProject(finalYear)) : ''}
-      ${academic.length ? row('Academic<br/>Projects', academic.map(renderProject).join('')) : ''}
-      ${awards.map((s) => renderAwardOrCustom(s, 'Awards &amp;<br/>Achievements')).join('')}
-      ${skillsHtml ? row(esc(d.skillsTitle || 'Skills'), `<ul class="cls-bullets">${skillsHtml}</ul>`) : ''}
-      ${otherCustom.map((s) => renderAwardOrCustom(s)).join('')}
+      ${row('Objective',
+        d.summary ? `<p class="cls-body">${esc(trim(d.summary, MAX_SUMMARY))}</p>` : EMPTY)}
+      ${row('Education',           educationHtml  || EMPTY)}
+      ${row('Work<br/>Experience', experienceHtml || EMPTY)}
+      ${row('Final Year<br/>Project',
+        finalYear ? renderProject(finalYear) : EMPTY)}
+      ${row('Academic<br/>Projects',
+        academic.length ? academic.map(renderProject).join('') : EMPTY)}
+      ${row('Awards &amp;<br/>Achievements', awardsHtml)}
+      ${row(esc(d.skillsTitle || 'Skills'),
+        skillsList.length ? skillsHtml : EMPTY)}
+      ${otherCustom.map(renderTrailingCustom).join('')}
     </article>`;
 }
 
@@ -467,10 +515,10 @@ function generateHTML(resumeData = {}, templateName = 'classic') {
     .cls {
       width: 210mm;
       height: 297mm;
-      padding: 14mm 16mm;
+      padding: 13mm 15mm;
       font-family: 'Times New Roman', Times, serif;
-      font-size: 10.5px;
-      line-height: 1.35;
+      font-size: 11px;
+      line-height: 1.4;
       color: #000;
       box-sizing: border-box;
       overflow: hidden;
@@ -490,8 +538,19 @@ function generateHTML(resumeData = {}, templateName = 'classic') {
       line-height: 1.1;
       color: #000;
     }
-    .cls-contact   { margin-top: 6px; font-size: 10.5px; line-height: 1.4; }
-    .cls-address   { margin-top: 4px; }
+    .cls-contact { margin-top: 7px; font-size: 11px; line-height: 1.5; }
+    .cls-contact-line {
+      display: flex;
+      align-items: center;
+      line-height: 1.5;
+    }
+    .cls-address-line {
+      display: flex;
+      align-items: flex-start;
+      margin-top: 2px;
+      line-height: 1.4;
+    }
+    .cls-address-line > svg { margin-top: 2px; }
     .cls-photo {
       flex-shrink: 0;
       width: 100px;
@@ -513,21 +572,21 @@ function generateHTML(resumeData = {}, templateName = 'classic') {
     }
     .cls-row {
       display: grid;
-      grid-template-columns: 110px 1fr;
+      grid-template-columns: 115px 1fr;
       column-gap: 14px;
-      padding-top: 8px;
+      padding-top: 9px;
     }
     .cls-label {
       text-align: right;
       font-weight: 700;
-      font-size: 11px;
+      font-size: 11.5px;
       color: #000;
       padding-right: 12px;
       border-right: 1px solid #000;
       line-height: 1.25;
     }
-    .cls-content { font-size: 10.5px; color: #000; line-height: 1.4; }
-    .cls-entry { margin-bottom: 6px; }
+    .cls-content { font-size: 11px; color: #000; line-height: 1.45; }
+    .cls-entry { margin-bottom: 7px; }
     .cls-entry:last-child { margin-bottom: 0; }
     .cls-entry-head {
       display: flex;
@@ -535,13 +594,19 @@ function generateHTML(resumeData = {}, templateName = 'classic') {
       align-items: flex-start;
       gap: 10px;
     }
-    .cls-entry-title { font-weight: 700; font-size: 11px; color: #000; }
-    .cls-entry-meta  { text-align: right; font-size: 10px; line-height: 1.3; flex-shrink: 0; }
-    .cls-sub  { margin-top: 1px; font-size: 10.5px; }
-    .cls-body { margin: 2px 0 0 0; font-size: 10.5px; line-height: 1.4; }
+    .cls-entry-title { font-weight: 700; font-size: 11.5px; color: #000; }
+    .cls-entry-meta  { text-align: right; font-size: 10.5px; line-height: 1.3; flex-shrink: 0; }
+    .cls-sub  { margin-top: 1px; font-size: 11px; }
+    .cls-body { margin: 2px 0 0 0; font-size: 11px; line-height: 1.45; }
     .cls-bullets { margin: 2px 0 0 0; padding-left: 14px; }
-    .cls-bullets li { font-size: 10.5px; line-height: 1.4; margin-bottom: 1px; }
-    .cls-link { font-size: 10px; color: #000; }
+    .cls-bullets li { font-size: 11px; line-height: 1.45; margin-bottom: 1px; }
+    .cls-link {
+      display: inline-flex;
+      align-items: center;
+      font-size: 10.5px;
+      color: #000;
+      margin-top: 1px;
+    }
     .modern {
       display: grid;
       grid-template-columns: 30% minmax(0, 70%);

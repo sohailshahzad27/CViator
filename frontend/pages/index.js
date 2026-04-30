@@ -38,6 +38,7 @@ const EMPTY_RESUME = {
   location: '',
   linkedin: '',
   github: '',
+  others: '',
   photo: '',
   summary: '',
   markerStyle: 'number',
