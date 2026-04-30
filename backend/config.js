@@ -19,7 +19,10 @@ module.exports = {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   },
 
-  adminSignupCode: process.env.ADMIN_SIGNUP_CODE || 'CVIATOR-ADMIN-2026',
+  // Bootstrap-only: the email of the institution's root admin.
+  // The first admin signup matching this address is auto-approved and granted
+  // is_root_admin. Every other admin signup requires this user's approval.
+  rootAdminEmail: (process.env.ROOT_ADMIN_EMAIL || '').trim().toLowerCase(),
 
   db: {
     host:     process.env.DB_HOST     || 'localhost',

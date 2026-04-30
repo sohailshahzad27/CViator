@@ -1,16 +1,17 @@
 // frontend/services/admin.js
-// Thin wrappers over /api/admin/* endpoints.
+// Wrappers for /api/admin/* endpoints.
 
 import { apiFetch, API_URL, getToken } from './api';
 
-export async function fetchUsers({ page = 1, role, faculty, batch, department, q } = {}) {
+export async function fetchUsers({ page = 1, role, status, facultyId, departmentId, batch, q } = {}) {
   const params = new URLSearchParams();
   params.set('page', String(page));
-  if (role)       params.set('role',       role);
-  if (faculty)    params.set('faculty',    faculty);
-  if (batch)      params.set('batch',      batch);
-  if (department) params.set('department', department);
-  if (q)          params.set('q',          q);
+  if (role)         params.set('role',         role);
+  if (status)       params.set('status',       status);
+  if (facultyId)    params.set('facultyId',    String(facultyId));
+  if (departmentId) params.set('departmentId', String(departmentId));
+  if (batch)        params.set('batch',        batch);
+  if (q)            params.set('q',            q);
   return apiFetch(`/api/admin/users?${params.toString()}`, { auth: true });
 }
 
@@ -18,20 +19,19 @@ export async function fetchUser(id) {
   return apiFetch(`/api/admin/users/${id}`, { auth: true });
 }
 
+// Returns { faculties: [{id, code, name, departments: [{id, code, name}]}], batches: [...] }
 export async function fetchFilters() {
   return apiFetch('/api/admin/filters', { auth: true });
 }
 
-// Streams a ZIP of every CV matching the current filters. Same query
-// shape as fetchUsers (minus pagination — the zip ignores page size).
-export async function downloadAllCvs({ role, faculty, batch, department, q, template = 'classic' } = {}) {
+// Public — no auth header (filters: facultyId, departmentId, batch, q, template)
+export async function downloadAllCvs({ facultyId, departmentId, batch, q, template = 'classic' } = {}) {
   const params = new URLSearchParams();
-  if (role)       params.set('role',       role);
-  if (faculty)    params.set('faculty',    faculty);
-  if (batch)      params.set('batch',      batch);
-  if (department) params.set('department', department);
-  if (q)          params.set('q',          q);
-  if (template)   params.set('template',   template);
+  if (facultyId)    params.set('facultyId',    String(facultyId));
+  if (departmentId) params.set('departmentId', String(departmentId));
+  if (batch)        params.set('batch',        batch);
+  if (q)            params.set('q',            q);
+  if (template)     params.set('template',     template);
 
   const token = getToken();
   const res = await fetch(`${API_URL}/api/admin/download-all?${params.toString()}`, {
@@ -39,10 +39,7 @@ export async function downloadAllCvs({ role, faculty, batch, department, q, temp
   });
   if (!res.ok) {
     let message = `Download failed (${res.status})`;
-    try {
-      const body = await res.json();
-      if (body?.error) message = body.error;
-    } catch { /* not JSON, keep default */ }
+    try { const body = await res.json(); if (body?.error) message = body.error; } catch {}
     const err = new Error(message);
     err.status = res.status;
     throw err;
@@ -62,7 +59,6 @@ export async function downloadAllCvs({ role, faculty, batch, department, q, temp
   URL.revokeObjectURL(url);
 }
 
-// Streams the PDF blob for a given user; triggers a browser download.
 export async function downloadUserPdf(id, { template = 'classic', filename } = {}) {
   const token = getToken();
   const res = await fetch(
@@ -79,4 +75,18 @@ export async function downloadUserPdf(id, { template = 'classic', filename } = {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+// ── Root-admin only ────────────────────────────────────────────
+export async function fetchAdminRequests() {
+  return apiFetch('/api/admin/admin-requests', { auth: true });
+}
+export async function approveAdminRequest(id) {
+  return apiFetch(`/api/admin/admin-requests/${id}/approve`, { method: 'POST', auth: true });
+}
+export async function rejectAdminRequest(id) {
+  return apiFetch(`/api/admin/admin-requests/${id}/reject`, { method: 'POST', auth: true });
+}
+export async function fetchAuditLog() {
+  return apiFetch('/api/admin/audit', { auth: true });
 }

@@ -38,8 +38,12 @@ export default function VerifyEmailPage() {
     if (!addr) return;
     setState('resending');
     try {
-      await resendVerification(addr);
-      setState('resent');
+      const result = await resendVerification(addr);
+      if (result?.devLink) {
+        router.replace(result.devLink);
+      } else {
+        setState('resent');
+      }
     } catch (err) {
       setState('error');
       setMessage(err.message || 'Could not resend email.');

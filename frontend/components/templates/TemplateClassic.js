@@ -13,10 +13,9 @@
 //   1. Objective
 //   2. Education
 //   3. Work Experience
-//   4. Final Year Project
-//   5. Academic Projects
-//   6. Awards & Achievements
-//   7. Skills
+//   4. Projects
+//   5. Skills
+// Custom sections are rendered after Skills.
 //
 // Empty content area shows a faint dash so the row stays visible.
 //
@@ -43,12 +42,12 @@ import {
   stripProtocol,
 } from '../../utils/resume';
 
-const MAX_SKILLS     = 8;
-const MAX_PROJECTS   = 4;
-const MAX_SUMMARY    = 420;
-const MAX_DESC       = 280;
-const MAX_AW_DESC    = 180;
-const MAX_SKILL_DESC = 160;
+const MAX_SKILLS      = 8;
+const MAX_PROJECTS    = 4;
+const MAX_SUMMARY     = 420;
+const MAX_DESC        = 280;
+const MAX_CUSTOM_DESC = 180;
+const MAX_SKILL_DESC  = 160;
 
 const FONT = "'Times New Roman', Times, serif";
 
@@ -77,12 +76,7 @@ const PLACEHOLDER = {
     { name: 'Databases',  description: 'PostgreSQL, MongoDB, Redis' },
     { name: 'Frameworks', description: 'FastAPI, Flask, Django' },
   ],
-  customSections: [
-    { id: 'p-aw-1', title: 'Awards & Achievements', items: [
-      { id: 'p-aw-1-i1', name: "Dean's Honour List", description: 'Top 5% of cohort, 2023–24' },
-      { id: 'p-aw-1-i2', name: 'ICPC Regional Finalist', description: 'Asia-West regional, 2024' },
-    ]},
-  ],
+  customSections: [],
 };
 
 // ── Page (strict A4) ─────────────────────────────────────────────
@@ -217,14 +211,7 @@ function TemplateClassic({ resume }) {
   const projects   = sortByDateDesc(r.projects   || []).slice(0, MAX_PROJECTS);
   const education  = sortByDateDesc(r.education  || []);
   const experience = sortByDateDesc(r.experience || []);
-
-  const finalYear  = projects[0];
-  const academic   = projects.slice(1);
-
-  const customs   = r.customSections || [];
-  const isAwards  = (s) => /award|achievement|honor/i.test(s?.title || '');
-  const awards    = customs.filter(isAwards);
-  const otherCustom = customs.filter((s) => !isAwards(s));
+  const customs    = r.customSections || [];
 
   const addressLines = String(r.location || '')
     .split(/\r?\n|,\s*/)
@@ -322,41 +309,12 @@ function TemplateClassic({ resume }) {
           : <span style={EMPTY_HINT}>—</span>}
       </Row>
 
-      <Row label={<>Final Year<br />Project</>}>
-        {finalYear
-          ? <ProjectBlock project={finalYear} markerStyle={markerStyle} />
-          : <span style={EMPTY_HINT}>—</span>}
-      </Row>
-
-      <Row label={<>Academic<br />Projects</>}>
-        {academic.length > 0
-          ? academic.map((pr, i) => (
-              <ProjectBlock key={pr.id || `proj-${i}`} project={pr} markerStyle={markerStyle} spaced={i < academic.length - 1} />
+      <Row label="Projects">
+        {projects.length > 0
+          ? projects.map((pr, i) => (
+              <ProjectBlock key={pr.id || `proj-${i}`} project={pr} markerStyle={markerStyle} spaced={i < projects.length - 1} />
             ))
           : <span style={EMPTY_HINT}>—</span>}
-      </Row>
-
-      {/* Awards row — always rendered, even with no items */}
-      <Row label={<>Awards &amp;<br />Achievements</>}>
-        {(() => {
-          const awardItems = awards.flatMap((sec) =>
-            (sec.items || []).length
-              ? sec.items
-              : toLines(sec.content).map((line) => ({ name: '', description: line }))
-          );
-          if (awardItems.length === 0) return <span style={EMPTY_HINT}>—</span>;
-          return (
-            <MarkerList markerStyle={markerStyle}>
-              {awardItems.map((it, i) => (
-                <MarkerItem key={`aw-${i}`} index={i} markerStyle={markerStyle}>
-                  {it.name && <strong>{it.name}</strong>}
-                  {it.name && it.description && ' — '}
-                  {it.description && trim(it.description, MAX_AW_DESC)}
-                </MarkerItem>
-              ))}
-            </MarkerList>
-          );
-        })()}
       </Row>
 
       <Row label={r.skillsTitle || 'Skills'}>
@@ -375,8 +333,8 @@ function TemplateClassic({ resume }) {
           : <span style={EMPTY_HINT}>—</span>}
       </Row>
 
-      {/* Trailing custom sections (rendered only when they have data — they're optional) */}
-      {otherCustom.map((sec, si) => {
+      {/* Custom sections — rendered only when they have data */}
+      {customs.map((sec, si) => {
         const items = sec?.items || [];
         const legacy = !items.length && sec?.content ? toLines(sec.content) : [];
         if (!sec?.title && !items.length && !legacy.length) return null;
@@ -390,7 +348,7 @@ function TemplateClassic({ resume }) {
                 <MarkerItem key={it.key} index={i} markerStyle={markerStyle}>
                   {it.name && <strong>{it.name}</strong>}
                   {it.name && it.description && ' — '}
-                  {it.description && trim(it.description, MAX_AW_DESC)}
+                  {it.description && trim(it.description, MAX_CUSTOM_DESC)}
                 </MarkerItem>
               ))}
             </MarkerList>

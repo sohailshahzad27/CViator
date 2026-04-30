@@ -160,12 +160,12 @@ function contactLine(icon, text) {
 
 function classicTemplate(d) {
   // Render-only caps; full data stays in DB.
-  const MAX_SKILLS     = 8;
-  const MAX_PROJECTS   = 4;
-  const MAX_SUMMARY    = 420;
-  const MAX_DESC       = 280;
-  const MAX_AW_DESC    = 180;
-  const MAX_SKILL_DESC = 160;
+  const MAX_SKILLS      = 8;
+  const MAX_PROJECTS    = 4;
+  const MAX_SUMMARY     = 420;
+  const MAX_DESC        = 280;
+  const MAX_CUSTOM_DESC = 180;
+  const MAX_SKILL_DESC  = 160;
 
   const trim = (text, n) => {
     if (!text) return '';
@@ -179,10 +179,8 @@ function classicTemplate(d) {
       .map((l) => l.replace(/^\s*[-•*]\s?/, '').trim())
       .filter(Boolean);
 
-  const skillsList = normalizeSkills(d.skills).slice(0, MAX_SKILLS);
-  const projects   = sortByDateDesc(d.projects || []).slice(0, MAX_PROJECTS);
-  const finalYear  = projects[0];
-  const academic   = projects.slice(1);
+  const skillsList  = normalizeSkills(d.skills).slice(0, MAX_SKILLS);
+  const projects    = sortByDateDesc(d.projects || []).slice(0, MAX_PROJECTS);
   const markerStyle = d.markerStyle === 'dot' || d.markerStyle === 'none' ? d.markerStyle : 'number';
 
   // Marker-aware list helpers (mirror MarkerList / MarkerItem in TemplateClassic.js).
@@ -195,11 +193,8 @@ function classicTemplate(d) {
     return `<${tag} class="cls-bullets" style="${listStyle}">${items.map((html) => `<li>${html}</li>`).join('')}</${tag}>`;
   };
 
-  const customs   = d.customSections || [];
-  const isAwards  = (s) => /award|achievement|honor/i.test(s?.title || '');
-  const awards    = customs.filter(isAwards);
-  const otherCustom = customs.filter((s) => !isAwards(s));
-  const EMPTY = `<span style="color:#bbb;font-style:italic">—</span>`;
+  const customs = d.customSections || [];
+  const EMPTY   = `<span style="color:#bbb;font-style:italic">—</span>`;
 
   const addressLines = String(d.location || '')
     .split(/\r?\n|,\s*/)
@@ -262,28 +257,15 @@ function classicTemplate(d) {
     ${s.name ? `<strong>${esc(s.name)}</strong>` : ''}${s.name && s.description ? ': ' : ''}${s.description ? esc(trim(s.description, MAX_SKILL_DESC)) : ''}
   `.trim()));
 
-  // Aggregate ALL award sections into a single list (so the "Awards &
-  // Achievements" row is always rendered, even with multiple sources).
-  const awardItems = awards.flatMap((sec) => {
-    const items = sec?.items || [];
-    if (items.length) return items.map((it) => ({ name: it.name, description: it.description }));
-    return toLines(sec?.content).map((line) => ({ name: '', description: line }));
-  });
-  const awardsHtml = awardItems.length
-    ? renderList(awardItems.map((it) => `
-        ${it.name ? `<strong>${esc(it.name)}</strong>` : ''}${it.name && it.description ? ' — ' : ''}${it.description ? esc(trim(it.description, MAX_AW_DESC)) : ''}
-      `.trim()))
-    : EMPTY;
-
-  const renderTrailingCustom = (sec) => {
+  const renderCustomRow = (sec) => {
     const items = sec?.items || [];
     const legacy = !items.length && sec?.content ? toLines(sec.content) : [];
-    if (!items.length && !legacy.length) return '';
+    if (!sec?.title && !items.length && !legacy.length) return '';
     const html = items.length
       ? renderList(items.map((it) => `
-          ${it.name ? `<strong>${esc(it.name)}</strong>` : ''}${it.name && it.description ? ' — ' : ''}${it.description ? esc(trim(it.description, MAX_AW_DESC)) : ''}
+          ${it.name ? `<strong>${esc(it.name)}</strong>` : ''}${it.name && it.description ? ' — ' : ''}${it.description ? esc(trim(it.description, MAX_CUSTOM_DESC)) : ''}
         `.trim()))
-      : renderList(legacy.map((l) => esc(trim(l, MAX_AW_DESC))));
+      : renderList(legacy.map((l) => esc(trim(l, MAX_CUSTOM_DESC))));
     return row(esc(sec.title || 'Custom'), html);
   };
 
@@ -318,14 +300,11 @@ function classicTemplate(d) {
         d.summary ? `<p class="cls-body">${esc(trim(d.summary, MAX_SUMMARY))}</p>` : EMPTY)}
       ${row('Education',           educationHtml  || EMPTY)}
       ${row('Work<br/>Experience', experienceHtml || EMPTY)}
-      ${row('Final Year<br/>Project',
-        finalYear ? renderProject(finalYear) : EMPTY)}
-      ${row('Academic<br/>Projects',
-        academic.length ? academic.map(renderProject).join('') : EMPTY)}
-      ${row('Awards &amp;<br/>Achievements', awardsHtml)}
+      ${row('Projects',
+        projects.length ? projects.map(renderProject).join('') : EMPTY)}
       ${row(esc(d.skillsTitle || 'Skills'),
         skillsList.length ? skillsHtml : EMPTY)}
-      ${otherCustom.map(renderTrailingCustom).join('')}
+      ${customs.map(renderCustomRow).join('')}
     </article>`;
 }
 

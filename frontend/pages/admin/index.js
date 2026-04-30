@@ -1,11 +1,6 @@
 // frontend/pages/admin/index.js
-// Admin dashboard — visible only to users with is_admin = true.
-//
-// Features:
-//   • Paginated user table with role / faculty / batch / department / search filters
-//   • Click "View CV" to expand a panel with that user's CV summary
-//   • Click "Download PDF" to fetch the user's CV as PDF (Classic / Modern)
-//   • Non-admin users are bounced back to / (the builder)
+// Admin dashboard — visible only to authenticated admins (status=active).
+// Root admins additionally see the "Pending admin requests" panel.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Head from 'next/head';
@@ -13,34 +8,35 @@ import { useRouter } from 'next/router';
 import { useAuth } from '../../hooks/useAuth';
 import {
   fetchUsers, fetchFilters, downloadUserPdf, downloadAllCvs,
+  fetchAdminRequests, approveAdminRequest, rejectAdminRequest,
 } from '../../services/admin';
-
-// ── helpers ───────────────────────────────────────────────────────
 
 function fmtDate(iso) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-GB', {
-    day: '2-digit', month: 'short', year: 'numeric',
-  });
+  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
-
-// ── page ──────────────────────────────────────────────────────────
 
 export default function AdminPage() {
   const router = useRouter();
   const { status, user, logout } = useAuth();
 
-  const [state,    setState]    = useState('loading');  // loading | forbidden | error | ready
-  const [users,    setUsers]    = useState([]);
-  const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
+  const [state,         setState]         = useState('loading');
+  const [users,         setUsers]         = useState([]);
+  const [pagination,    setPagination]    = useState({ page: 1, pages: 1, total: 0 });
   const [downloadingId, setDownloadingId] = useState(null);
-  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [downloadingAll,setDownloadingAll]= useState(false);
 
-  // Filters
+  // Cascading filters
   const [filterOptions, setFilterOptions] = useState({ faculties: [], batches: [] });
-  const [filters, setFilters] = useState({ role: '', faculty: '', batch: '', q: '' });
+  const [filters, setFilters] = useState({
+    role: '', status: '', facultyId: '', departmentId: '', batch: '', q: '',
+  });
 
-  // Auth gates: bounce non-admins to /, anonymous to /login
+  // Root-only: pending admin requests
+  const [adminRequests, setAdminRequests] = useState([]);
+  const [reqBusyId,     setReqBusyId]     = useState(null);
+
+  // Auth gates
   useEffect(() => {
     if (status === 'unauthenticated') router.replace('/login');
     else if (status === 'authenticated' && !user?.isAdmin) router.replace('/');
@@ -55,28 +51,52 @@ export default function AdminPage() {
       setState('ready');
     } catch (err) {
       if (err.status === 403) setState('forbidden');
-      else {
-        console.error('[admin] fetch users failed:', err);
-        setState('error');
-      }
+      else { console.error(err); setState('error'); }
     }
   }, [filters]);
 
-  // Initial load + filter changes.
+  const loadAdminRequests = useCallback(async () => {
+    if (!user?.isRootAdmin) return;
+    try {
+      const r = await fetchAdminRequests();
+      setAdminRequests(r.requests || []);
+    } catch (err) {
+      console.error('[admin] fetch admin-requests failed:', err);
+    }
+  }, [user]);
+
   useEffect(() => {
     if (status !== 'authenticated' || !user?.isAdmin) return;
     loadPage(1);
     fetchFilters().then(setFilterOptions).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadAdminRequests();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, user]);
 
-  // Re-fetch when filters change (debounced for the search input).
   useEffect(() => {
     if (status !== 'authenticated' || !user?.isAdmin) return;
     const t = setTimeout(() => loadPage(1, filters), 300);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters]);
+
+  const setFilter = (key, value) => setFilters((f) => {
+    const next = { ...f, [key]: value };
+    // Clear department when faculty changes
+    if (key === 'facultyId') next.departmentId = '';
+    return next;
+  });
+
+  const selectedFaculty = useMemo(
+    () => filterOptions.faculties.find((f) => String(f.id) === String(filters.facultyId)),
+    [filterOptions, filters.facultyId]
+  );
+  const showDepartmentFilter = selectedFaculty && selectedFaculty.departments.length > 1;
+
+  const activeFilterCount = useMemo(
+    () => Object.values(filters).filter(Boolean).length,
+    [filters]
+  );
 
   const handleDownload = useCallback(async (u) => {
     setDownloadingId(u.id);
@@ -85,30 +105,39 @@ export default function AdminPage() {
         || u.fullName || u.email || 'resume';
       await downloadUserPdf(u.id, { template: 'classic', filename });
     } catch (err) {
-      console.error('[admin] download failed:', err);
       alert('Could not download PDF.');
-    } finally {
-      setDownloadingId(null);
-    }
+    } finally { setDownloadingId(null); }
   }, []);
 
   const handleDownloadAll = useCallback(async () => {
     setDownloadingAll(true);
     try {
-      await downloadAllCvs({ role: filters.role, faculty: filters.faculty, batch: filters.batch, q: filters.q, template: 'classic' });
+      await downloadAllCvs({
+        facultyId: filters.facultyId, departmentId: filters.departmentId,
+        batch: filters.batch, q: filters.q, template: 'classic',
+      });
     } catch (err) {
-      console.error('[admin] download-all failed:', err);
       alert(err.message || 'Could not download CVs.');
-    } finally {
-      setDownloadingAll(false);
-    }
+    } finally { setDownloadingAll(false); }
   }, [filters]);
 
-  const setFilter = (key, value) => setFilters((f) => ({ ...f, [key]: value }));
+  const handleApproveAdmin = async (id) => {
+    setReqBusyId(id);
+    try { await approveAdminRequest(id); await loadAdminRequests(); }
+    catch (err) { alert(err.message || 'Approval failed.'); }
+    finally { setReqBusyId(null); }
+  };
+  const handleRejectAdmin = async (id) => {
+    if (!confirm('Reject this admin request? The pending account will be deleted.')) return;
+    setReqBusyId(id);
+    try { await rejectAdminRequest(id); await loadAdminRequests(); }
+    catch (err) { alert(err.message || 'Reject failed.'); }
+    finally { setReqBusyId(null); }
+  };
 
-  const activeFilterCount = useMemo(() => Object.values(filters).filter(Boolean).length, [filters]);
-
-  if (status === 'loading') return <Shell user={user} onLogout={() => logout().then(() => router.replace('/login'))}><Spinner /></Shell>;
+  if (status === 'loading') {
+    return <Shell user={user} onLogout={() => logout().then(() => router.replace('/login'))}><Spinner /></Shell>;
+  }
 
   if (state === 'forbidden') {
     return (
@@ -123,6 +152,40 @@ export default function AdminPage() {
 
   return (
     <Shell user={user} onLogout={() => logout().then(() => router.replace('/login'))}>
+
+      {/* Root admin: pending admin requests */}
+      {user?.isRootAdmin && adminRequests.length > 0 && (
+        <section className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <h2 className="text-sm font-semibold text-amber-900">
+            Pending admin requests ({adminRequests.length})
+          </h2>
+          <div className="mt-3 space-y-2">
+            {adminRequests.map((r) => (
+              <div key={r.id} className="flex items-center justify-between rounded border border-amber-200 bg-white px-3 py-2">
+                <div>
+                  <div className="text-sm font-medium text-slate-900">{r.full_name || `${r.first_name || ''} ${r.last_name || ''}`.trim() || '(no name)'}</div>
+                  <div className="text-xs text-slate-500">{r.email} · requested {fmtDate(r.created_at)}</div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleApproveAdmin(r.id)}
+                    disabled={reqBusyId === r.id}
+                    className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                  >Approve</button>
+                  <button
+                    type="button"
+                    onClick={() => handleRejectAdmin(r.id)}
+                    disabled={reqBusyId === r.id}
+                    className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-slate-300 disabled:opacity-60"
+                  >Reject</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <div className="mb-5 flex items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Users</h1>
@@ -139,19 +202,17 @@ export default function AdminPage() {
             type="button"
             onClick={handleDownloadAll}
             disabled={downloadingAll}
-            className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60"
           >
-            {downloadingAll
-              ? 'Bundling…'
-              : `Download all ${activeFilterCount > 0 ? 'filtered ' : ''}(${pagination.total}) as ZIP`}
+            {downloadingAll ? 'Bundling…' : `Download all ${activeFilterCount > 0 ? 'filtered ' : ''}(${pagination.total}) as ZIP`}
           </button>
         )}
       </div>
 
-      {/* ── Filter bar ─────────────────────────────────────── */}
-      <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-4">
+      {/* Filter bar */}
+      <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-5">
         <FilterInput
-          placeholder="Search email / name / reg no"
+          placeholder="Search email / name / reg"
           value={filters.q}
           onChange={(v) => setFilter('q', v)}
         />
@@ -165,11 +226,19 @@ export default function AdminPage() {
           ]}
         />
         <FilterSelect
-          value={filters.faculty}
-          onChange={(v) => setFilter('faculty', v)}
+          value={filters.facultyId}
+          onChange={(v) => setFilter('facultyId', v)}
           placeholder="All faculties"
-          options={filterOptions.faculties.map((f) => ({ value: f, label: f }))}
+          options={filterOptions.faculties.map((f) => ({ value: String(f.id), label: f.code }))}
         />
+        {showDepartmentFilter ? (
+          <FilterSelect
+            value={filters.departmentId}
+            onChange={(v) => setFilter('departmentId', v)}
+            placeholder="All departments"
+            options={selectedFaculty.departments.map((d) => ({ value: String(d.id), label: d.name }))}
+          />
+        ) : <span className="hidden sm:block" />}
         <FilterSelect
           value={filters.batch}
           onChange={(v) => setFilter('batch', v)}
@@ -179,11 +248,9 @@ export default function AdminPage() {
         {activeFilterCount > 0 && (
           <button
             type="button"
-            onClick={() => setFilters({ role: '', faculty: '', batch: '', q: '' })}
+            onClick={() => setFilters({ role: '', status: '', facultyId: '', departmentId: '', batch: '', q: '' })}
             className="col-span-full text-left text-xs text-slate-500 underline hover:text-slate-900 sm:col-auto"
-          >
-            Clear filters
-          </button>
+          >Clear filters</button>
         )}
       </div>
 
@@ -192,13 +259,8 @@ export default function AdminPage() {
       ) : state === 'error' ? (
         <div className="rounded-lg border border-slate-200 bg-white p-6 text-center">
           <p className="text-sm text-slate-700">Failed to load data.</p>
-          <button
-            type="button"
-            onClick={() => loadPage(pagination.page)}
-            className="mt-3 text-xs text-slate-500 underline hover:text-slate-900"
-          >
-            Retry
-          </button>
+          <button type="button" onClick={() => loadPage(pagination.page)}
+            className="mt-3 text-xs text-slate-500 underline hover:text-slate-900">Retry</button>
         </div>
       ) : users.length === 0 ? (
         <Empty text="No users match those filters." />
@@ -210,7 +272,7 @@ export default function AdminPage() {
                 <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                   <Th>Name / Email</Th>
                   <Th>Role</Th>
-                  <Th>Faculty</Th>
+                  <Th>Faculty / Dept</Th>
                   <Th>Batch / Reg</Th>
                   <Th>Joined</Th>
                   <Th><span className="sr-only">Actions</span></Th>
@@ -223,11 +285,12 @@ export default function AdminPage() {
                       <div className="font-medium text-slate-900">{u.fullName || '—'}</div>
                       <div className="text-xs text-slate-500">{u.email}</div>
                     </Td>
-                    <Td>
-                      <RoleBadge role={u.role} isAdmin={u.isAdmin} />
-                    </Td>
+                    <Td><RoleBadge user={u} /></Td>
                     <Td className="text-xs">
-                      {u.faculty || <span className="text-slate-400">—</span>}
+                      {u.facultyName || <span className="text-slate-400">—</span>}
+                      {u.departmentName && u.departmentName !== u.facultyName && (
+                        <div className="text-slate-500">{u.departmentName}</div>
+                      )}
                     </Td>
                     <Td className="text-xs">
                       {u.batch ? `Batch ${u.batch}` : null}
@@ -243,9 +306,7 @@ export default function AdminPage() {
                             onClick={() => handleDownload(u)}
                             disabled={downloadingId === u.id}
                             className="rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:opacity-60"
-                          >
-                            {downloadingId === u.id ? 'Generating…' : 'Download PDF'}
-                          </button>
+                          >{downloadingId === u.id ? 'Generating…' : 'Download PDF'}</button>
                         ) : (
                           <span className="text-xs text-slate-400">—</span>
                         )}
@@ -259,24 +320,11 @@ export default function AdminPage() {
 
           {pagination.pages > 1 && (
             <div className="mt-4 flex items-center justify-center gap-2">
-              <PaginationBtn
-                disabled={pagination.page <= 1}
-                onClick={() => loadPage(pagination.page - 1)}
-              >
-                ← Prev
-              </PaginationBtn>
-              <span className="text-xs text-slate-500">
-                {pagination.page} / {pagination.pages}
-              </span>
-              <PaginationBtn
-                disabled={pagination.page >= pagination.pages}
-                onClick={() => loadPage(pagination.page + 1)}
-              >
-                Next →
-              </PaginationBtn>
+              <PaginationBtn disabled={pagination.page <= 1} onClick={() => loadPage(pagination.page - 1)}>← Prev</PaginationBtn>
+              <span className="text-xs text-slate-500">{pagination.page} / {pagination.pages}</span>
+              <PaginationBtn disabled={pagination.page >= pagination.pages} onClick={() => loadPage(pagination.page + 1)}>Next →</PaginationBtn>
             </div>
           )}
-
         </>
       )}
     </Shell>
@@ -295,15 +343,13 @@ function Shell({ children, user, onLogout }) {
             <div className="flex h-7 w-7 items-center justify-center rounded bg-slate-900 text-xs font-bold text-white">C</div>
             <span className="text-sm font-semibold text-slate-900">
               Cviator <span className="font-normal text-slate-500">Admin</span>
+              {user?.isRootAdmin && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">ROOT</span>}
             </span>
             <div className="ml-auto flex items-center gap-3">
               {user && <span className="hidden text-xs text-slate-500 sm:inline">{user.email}</span>}
               {onLogout && (
-                <button
-                  type="button"
-                  onClick={onLogout}
-                  className="rounded border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
-                >
+                <button type="button" onClick={onLogout}
+                  className="rounded border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
                   Sign out
                 </button>
               )}
@@ -318,57 +364,37 @@ function Shell({ children, user, onLogout }) {
 
 function FilterInput({ placeholder, value, onChange }) {
   return (
-    <input
-      type="text"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-500"
-    />
+    <input type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+      className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-500" />
   );
 }
 
 function FilterSelect({ value, onChange, placeholder, options }) {
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-slate-500"
-    >
+    <select value={value} onChange={(e) => onChange(e.target.value)}
+      className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-slate-500">
       <option value="">{placeholder}</option>
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   );
 }
 
-function RoleBadge({ role, isAdmin }) {
-  if (isAdmin || role === 'admin') {
-    return <span className="inline-block rounded bg-slate-900 px-1.5 py-0.5 text-[11px] font-semibold text-white">Admin</span>;
-  }
+function RoleBadge({ user: u }) {
+  if (u.isRootAdmin) return <span className="inline-block rounded bg-amber-500 px-1.5 py-0.5 text-[11px] font-semibold text-white">Root admin</span>;
+  if (u.isAdmin)     return <span className="inline-block rounded bg-slate-900 px-1.5 py-0.5 text-[11px] font-semibold text-white">Admin</span>;
   return <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700">Student</span>;
 }
 
-function Th({ children }) {
-  return <th className="px-4 py-3 text-left">{children}</th>;
-}
-
-function Td({ children, className = '' }) {
-  return <td className={`px-4 py-3 text-sm text-slate-700 ${className}`}>{children}</td>;
-}
-
+function Th({ children })       { return <th className="px-4 py-3 text-left">{children}</th>; }
+function Td({ children, className = '' }) { return <td className={`px-4 py-3 text-sm text-slate-700 ${className}`}>{children}</td>; }
 function PaginationBtn({ children, onClick, disabled }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="rounded border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-    >
+    <button type="button" onClick={onClick} disabled={disabled}
+      className="rounded border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50">
       {children}
     </button>
   );
 }
-
 function Spinner() {
   return (
     <div className="flex items-center justify-center py-12">
@@ -376,7 +402,4 @@ function Spinner() {
     </div>
   );
 }
-
-function Empty({ text }) {
-  return <p className="py-8 text-center text-sm text-slate-400">{text}</p>;
-}
+function Empty({ text }) { return <p className="py-8 text-center text-sm text-slate-400">{text}</p>; }

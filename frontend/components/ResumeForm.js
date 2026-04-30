@@ -7,12 +7,13 @@
 // Custom sections:         section title + unlimited named items with optional description.
 // Formatting bar:          global marker-style selector (Numbers / Dots / None).
 
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { uid, withId, sortByDateDesc, normalizeSkills } from '../utils/resume';
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png'];
+const CROP_SIZE = 240; // px — size of the crop preview circle
 const MARKER_OPTIONS = [
   { value: 'number', label: '1. 2.' },
   { value: 'dot',    label: '• Dot' },
@@ -53,6 +54,7 @@ function ensureSkillIds(skills = []) {
 
 function ResumeForm({ resume, setResume }) {
   const [uploadError, setUploadError] = useState('');
+  const [cropSrc,     setCropSrc]     = useState(null);
 
   // ── Generic field helpers ────────────────────────────────────
   const updateField = useCallback((key, value) => {
@@ -145,7 +147,7 @@ function ResumeForm({ resume, setResume }) {
     }));
   }, [setResume]);
 
-  // ── Photo upload ─────────────────────────────────────────────
+  // ── Photo upload — opens crop modal before saving ────────────
   const handlePhotoChange = useCallback((event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -160,10 +162,11 @@ function ResumeForm({ resume, setResume }) {
       return;
     }
     const reader = new FileReader();
-    reader.onload  = () => { updateField('photo', reader.result); setUploadError(''); };
+    reader.onload  = () => { setCropSrc(reader.result); setUploadError(''); };
     reader.onerror = () => setUploadError('Could not read that file. Try another image.');
     reader.readAsDataURL(file);
-  }, [updateField]);
+    event.target.value = '';
+  }, []);
 
   // ── Memoised derived data ─────────────────────────────────────
   const sortedExperience = useMemo(() => sortByDateDesc(resume.experience || []), [resume.experience]);
@@ -173,6 +176,13 @@ function ResumeForm({ resume, setResume }) {
 
   return (
     <div className="space-y-6">
+      {cropSrc && (
+        <CropModal
+          imageSrc={cropSrc}
+          onApply={(dataUrl) => { updateField('photo', dataUrl); setCropSrc(null); }}
+          onCancel={() => setCropSrc(null)}
+        />
+      )}
 
       {/* ── Formatting ──────────────────────────────────────── */}
       <section className="rounded-lg border border-slate-200 bg-white px-5 py-4 sm:px-6">
@@ -218,6 +228,15 @@ function ResumeForm({ resume, setResume }) {
                 {resume.photo ? 'Change' : 'Upload'}
                 <input type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" className="hidden" onChange={handlePhotoChange} />
               </label>
+              {resume.photo && (
+                <button
+                  type="button"
+                  onClick={() => setCropSrc(resume.photo)}
+                  className="text-[11px] font-medium text-slate-600 hover:text-slate-900"
+                >
+                  Crop
+                </button>
+              )}
               {resume.photo && (
                 <button type="button" onClick={() => updateField('photo', '')} className="text-[11px] text-slate-400 hover:text-red-600">
                   Remove
@@ -507,6 +526,141 @@ const DatePickerInput = memo(function DatePickerInput({ label, value, onChange, 
     </label>
   );
 });
+
+// ── Photo crop modal ──────────────────────────────────────────────
+function CropModal({ imageSrc, onApply, onCancel }) {
+  const [scale,  setScale]  = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const imgRef  = useRef(null);
+  const dragRef = useRef(null);
+
+  // Set initial scale so the image fills the crop circle.
+  const handleImgLoad = () => {
+    const img = imgRef.current;
+    if (!img) return;
+    const minScale = Math.max(CROP_SIZE / img.naturalWidth, CROP_SIZE / img.naturalHeight);
+    setScale(Math.max(minScale, 1));
+    setOffset({ x: 0, y: 0 });
+  };
+
+  const startDrag = (clientX, clientY) => {
+    dragRef.current = { startX: clientX - offset.x, startY: clientY - offset.y };
+  };
+  const moveDrag = (clientX, clientY) => {
+    if (!dragRef.current) return;
+    setOffset({ x: clientX - dragRef.current.startX, y: clientY - dragRef.current.startY });
+  };
+  const stopDrag = () => { dragRef.current = null; };
+
+  // Attach non-passive touchmove to prevent page scroll while dragging.
+  const containerRef = useRef(null);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handler = (e) => { if (dragRef.current) e.preventDefault(); };
+    el.addEventListener('touchmove', handler, { passive: false });
+    return () => el.removeEventListener('touchmove', handler);
+  }, []);
+
+  function handleApply() {
+    const img = imgRef.current;
+    if (!img) return;
+    const OUTPUT = 400;
+    const canvas = document.createElement('canvas');
+    canvas.width  = OUTPUT;
+    canvas.height = OUTPUT;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, OUTPUT, OUTPUT);
+
+    const iW = img.naturalWidth;
+    const iH = img.naturalHeight;
+    // Image center in container = (CROP_SIZE/2 + offset.x, CROP_SIZE/2 + offset.y)
+    // Image top-left = center - half of scaled size
+    const imgLeft = CROP_SIZE / 2 + offset.x - (iW * scale) / 2;
+    const imgTop  = CROP_SIZE / 2 + offset.y - (iH * scale) / 2;
+    // Convert crop area (0,0,CROP_SIZE,CROP_SIZE) to natural image coords
+    const srcX    = -imgLeft / scale;
+    const srcY    = -imgTop  / scale;
+    const srcSize = CROP_SIZE / scale;
+    ctx.drawImage(img, srcX, srcY, srcSize, srcSize, 0, 0, OUTPUT, OUTPUT);
+    onApply(canvas.toDataURL('image/jpeg', 0.88));
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="flex w-full max-w-sm flex-col items-center rounded-xl bg-white p-6 shadow-2xl">
+        <h3 className="mb-1 text-sm font-semibold text-slate-800">Crop photo</h3>
+        <p className="mb-4 text-xs text-slate-500">Drag to reposition · Scroll or slide to zoom</p>
+
+        {/* Crop preview circle */}
+        <div
+          ref={containerRef}
+          className="relative cursor-grab overflow-hidden rounded-full bg-slate-200 active:cursor-grabbing"
+          style={{ width: CROP_SIZE, height: CROP_SIZE }}
+          onMouseDown={(e) => startDrag(e.clientX, e.clientY)}
+          onMouseMove={(e) => moveDrag(e.clientX, e.clientY)}
+          onMouseUp={stopDrag}
+          onMouseLeave={stopDrag}
+          onTouchStart={(e) => startDrag(e.touches[0].clientX, e.touches[0].clientY)}
+          onTouchEnd={stopDrag}
+        >
+          <img
+            ref={imgRef}
+            src={imageSrc}
+            alt="Crop preview"
+            draggable={false}
+            onLoad={handleImgLoad}
+            style={{
+              position: 'absolute',
+              left: '50%',
+              top: '50%',
+              transform: `translate(calc(-50% + ${offset.x}px), calc(-50% + ${offset.y}px)) scale(${scale})`,
+              transformOrigin: 'center',
+              maxWidth: 'none',
+              userSelect: 'none',
+              pointerEvents: 'none',
+            }}
+          />
+          {/* Border overlay */}
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: '50%',
+            boxShadow: 'inset 0 0 0 2px rgba(255,255,255,0.75)',
+            pointerEvents: 'none',
+          }} />
+        </div>
+
+        {/* Zoom slider */}
+        <div className="mt-4 flex w-full items-center gap-2">
+          <span className="text-sm text-slate-400">−</span>
+          <input
+            type="range" min="0.1" max="4" step="0.01" value={scale}
+            onChange={(e) => setScale(Number(e.target.value))}
+            className="flex-1 accent-slate-900"
+          />
+          <span className="text-sm text-slate-400">+</span>
+        </div>
+
+        <div className="mt-5 flex w-full gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex-1 rounded-md border border-slate-200 py-2 text-sm font-medium text-slate-700 hover:border-slate-300 hover:text-slate-900"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleApply}
+            className="flex-1 rounded-md bg-slate-900 py-2 text-sm font-medium text-white hover:bg-slate-800"
+          >
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function PhotoPlaceholder() {
   return (

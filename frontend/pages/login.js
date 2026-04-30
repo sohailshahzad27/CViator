@@ -35,6 +35,10 @@ export default function LoginPage() {
         router.replace(`/verify-email?email=${encodeURIComponent(email.trim())}`);
         return;
       }
+      if (err.pendingApproval) {
+        router.replace(`/signup-pending?email=${encodeURIComponent(email.trim())}`);
+        return;
+      }
       setError(err.message || 'Could not log in.');
     } finally {
       setBusy(false);

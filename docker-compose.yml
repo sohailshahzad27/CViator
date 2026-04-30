@@ -48,7 +48,7 @@ services:
       - DB_NAME=${DB_NAME:-cviator}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
-      - ADMIN_SIGNUP_CODE=${ADMIN_SIGNUP_CODE}
+      - ROOT_ADMIN_EMAIL=${ROOT_ADMIN_EMAIL:-}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USER=${SMTP_USER:-}
