@@ -9,8 +9,9 @@
 const config = require('./config');
 require('dotenv').config();
 
-const express = require('express');
-const cors    = require('cors');
+const express   = require('express');
+const cors      = require('cors');
+const rateLimit = require('express-rate-limit');
 
 const pdfRoutes   = require('./routes/pdf');
 const authRoutes  = require('./routes/auth');
@@ -36,7 +37,15 @@ app.get('/', (_req, res) => {
   res.json({ ok: true, service: 'Cviator Pro API', version: '2.0.0' });
 });
 
-app.use('/api/auth',     authRoutes);
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please try again in 15 minutes.' },
+});
+
+app.use('/api/auth',     authLimiter, authRoutes);
 app.use('/api/cv',       cvRoutes);
 app.use('/api/admin',    adminRoutes);
 app.use('/generate-pdf', pdfRoutes);

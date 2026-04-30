@@ -1,16 +1,17 @@
 // frontend/pages/signup.js
-// ---------------------------------------------------------------
 // Create an account. Two roles: student, admin.
 //   • Student → first/last name, email, password, reg no, faculty, batch
 //   • Admin   → first/last name, email, password + admin signup code
-// On success, students land on /, admins on /admin.
-// ---------------------------------------------------------------
+// On success: students are sent to /verify-email (must confirm email first),
+// admins land directly on /admin.
 
 import { useEffect, useState } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useAuth } from '../hooks/useAuth';
+import { signupRaw } from '../services/auth';
+
 import { AuthShell, Field } from './login';
 
 const FACULTIES = [
@@ -24,18 +25,18 @@ const FACULTIES = [
 
 export default function SignupPage() {
   const router = useRouter();
-  const { status, signup, user } = useAuth();
+  const { status, user, setSession } = useAuth();
 
-  const [role,        setRole]        = useState('student');
-  const [firstName,   setFirstName]   = useState('');
-  const [lastName,    setLastName]    = useState('');
-  const [email,       setEmail]       = useState('');
-  const [password,    setPassword]    = useState('');
+  const [role,      setRole]      = useState('student');
+  const [firstName, setFirstName] = useState('');
+  const [lastName,  setLastName]  = useState('');
+  const [email,     setEmail]     = useState('');
+  const [password,  setPassword]  = useState('');
 
   // Student-only
-  const [regNo,    setRegNo]    = useState('');
-  const [faculty,  setFaculty]  = useState('');
-  const [batch,    setBatch]    = useState('');
+  const [regNo,   setRegNo]   = useState('');
+  const [faculty, setFaculty] = useState('');
+  const [batch,   setBatch]   = useState('');
 
   // Admin-only
   const [adminCode, setAdminCode] = useState('');
@@ -66,17 +67,20 @@ export default function SignupPage() {
         lastName:  lastName.trim(),
       };
       if (role === 'student') {
-        Object.assign(payload, {
-          regNo:   regNo.trim(),
-          faculty: faculty.trim(),
-          batch:   batch.trim(),
-        });
+        Object.assign(payload, { regNo: regNo.trim(), faculty: faculty.trim(), batch: batch.trim() });
       } else if (role === 'admin') {
         payload.adminCode = adminCode.trim();
       }
 
-      const u = await signup(payload);
-      router.replace(u?.isAdmin ? '/admin' : '/');
+      const result = await signupRaw(payload);
+
+      if (result.needsVerification) {
+        router.replace(`/verify-email?email=${encodeURIComponent(result.email)}&new=1`);
+      } else {
+        // Admin — token returned immediately
+        setSession(result.token, result.user);
+        router.replace('/admin');
+      }
     } catch (err) {
       setError(err.message || 'Could not create account.');
     } finally {
@@ -102,9 +106,7 @@ export default function SignupPage() {
                   type="button"
                   onClick={() => setRole(opt.value)}
                   className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition ${
-                    role === opt.value
-                      ? 'bg-slate-900 text-white'
-                      : 'text-slate-600 hover:text-slate-900'
+                    role === opt.value ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   {opt.label}

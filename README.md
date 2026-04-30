@@ -1,77 +1,71 @@
-<<<<<<< HEAD
-# Cviator Pro — Smart Resume Builder
+# Cviator Pro — University CV Builder
 
-A full-stack, production-ready resume builder web application with multiple templates,
-live preview, PDF export, optional database storage, and a complete DevOps pipeline.
-
----
-
-## Project Overview
-
-**Cviator Pro** lets users enter their personal details, education, experience, skills,
-and projects, pick from multiple professionally-designed resume templates, see a live
-preview in the browser, and download a polished PDF of their resume.
-
-The project is organized as two services (frontend + backend) and ships with Docker,
-Docker Compose, GitHub Actions CI/CD, Terraform, and AWS EC2 deployment instructions.
-
----
-
-## Features
-
-- Multi-section resume form (personal info, education, experience, skills, projects)
-- Real-time live preview using React state
-- Two hand-built resume templates (Classic & Modern) — switchable with a button
-- PDF download powered by Puppeteer (server-side rendering)
-- Optional MongoDB persistence (save & fetch resumes)
-- Placeholder AI endpoint (`/improve-text`) ready for integration
-- Fully Dockerized (frontend, backend, MongoDB)
-- GitHub Actions CI/CD pipeline
-- Terraform skeleton for AWS infrastructure
-- Step-by-step AWS EC2 deployment guide
+A full-stack, role-aware CV builder for university students with live preview, server-side PDF export, email verification, and an admin dashboard.
 
 ---
 
 ## Tech Stack
 
-| Layer          | Technology                 |
-|----------------|----------------------------|
-| Frontend       | Next.js (React) + Tailwind |
-| Backend        | Node.js + Express          |
-| PDF Engine     | Puppeteer                  |
-| Database       | MongoDB + Mongoose (opt.)  |
-| Containers     | Docker + Docker Compose    |
-| CI/CD          | GitHub Actions             |
-| IaC (optional) | Terraform                  |
-| Cloud          | AWS EC2                    |
+| Layer     | Technology                          |
+|-----------|-------------------------------------|
+| Frontend  | Next.js (pages router) + Tailwind   |
+| Backend   | Node.js + Express                   |
+| PDF       | Puppeteer (server-side rendering)   |
+| Database  | PostgreSQL 16 (JSONB for CV data)   |
+| Auth      | JWT (stateless, 7-day expiry)       |
+| Email     | Nodemailer (SMTP or console in dev) |
+| Containers| Docker + Docker Compose             |
+| CI        | GitHub Actions                      |
+| IaC       | Terraform (AWS EC2 skeleton)        |
+
+---
+
+## Roles
+
+| Role    | Can build CV | Can view all CVs | Notes                              |
+|---------|:------------:|:----------------:|------------------------------------|
+| Student | Yes          | No               | Requires reg no, faculty, batch    |
+| Admin   | No           | Yes              | Gated by `ADMIN_SIGNUP_CODE`       |
 
 ---
 
 ## Project Structure
 
 ```
-devops_Project/
-├── frontend/              # Next.js + Tailwind app
+cviator/
+├── frontend/                  # Next.js + Tailwind
 │   ├── pages/
+│   │   ├── index.js           # CV builder (auto-save, live preview)
+│   │   ├── login.js
+│   │   ├── signup.js
+│   │   ├── verify-email.js    # Post-signup email verification
+│   │   ├── forgot-password.js
+│   │   ├── reset-password.js
+│   │   └── admin/index.js     # Admin dashboard
 │   ├── components/
-│   │   └── templates/
-│   ├── styles/
-│   ├── Dockerfile
-│   └── package.json
-├── backend/               # Express API + Puppeteer PDF
+│   │   ├── ResumeForm.js
+│   │   ├── LivePreview.js
+│   │   └── templates/         # TemplateClassic, TemplateModern
+│   ├── hooks/useAuth.js
+│   └── services/              # api.js, auth.js, cv.js, admin.js
+├── backend/
+│   ├── server.js              # Express app + rate limiting
+│   ├── config.js
 │   ├── routes/
-│   ├── models/
-│   ├── utils/
-│   ├── server.js
-│   ├── Dockerfile
-│   └── package.json
-├── terraform/             # Optional IaC (AWS)
-│   └── main.tf
-├── .github/workflows/
-│   └── main.yml           # CI/CD pipeline
+│   │   ├── auth.js            # signup/login/verify-email/reset-password
+│   │   ├── cv.js              # GET/PUT /api/cv
+│   │   ├── admin.js           # user list, per-user PDF, bulk ZIP
+│   │   └── pdf.js             # /generate-pdf (Puppeteer)
+│   ├── db/
+│   │   ├── schema.sql         # Idempotent schema (safe on every boot)
+│   │   └── pool.js
+│   ├── middleware/auth.js      # requireAuth, requireAdmin, requireNonAdmin
+│   └── utils/
+│       ├── generateHTML.js    # CV → HTML for Puppeteer
+│       └── mailer.js          # Email sending (SMTP or console fallback)
+├── .env.example               # Root env template for docker-compose
 ├── docker-compose.yml
-├── .gitignore
-└── README.md
+└── terraform/main.tf          # AWS EC2 skeleton
 ```
 
 ---
@@ -80,19 +74,16 @@ devops_Project/
 
 ### Prerequisites
 - Node.js 18+
-- npm
-- (Optional) MongoDB running locally on `mongodb://localhost:27017`
+- PostgreSQL 16 running locally
 
 ### 1. Backend
 
 ```bash
 cd backend
 npm install
-cp .env.example .env   # edit MONGO_URI if you want DB persistence
-npm run dev
+cp .env.example .env   # fill in JWT_SECRET, ADMIN_SIGNUP_CODE, DB_* vars
+npm run dev            # starts on http://localhost:5000
 ```
-
-Backend runs on **http://localhost:5000**.
 
 ### 2. Frontend
 
@@ -100,160 +91,100 @@ Backend runs on **http://localhost:5000**.
 cd frontend
 npm install
 cp .env.example .env.local
-npm run dev
+npm run dev            # starts on http://localhost:3000
 ```
-
-Frontend runs on **http://localhost:3000**.
-
-Open your browser at http://localhost:3000, fill in the form, switch templates, and
-click **Download PDF**.
 
 ---
 
 ## Running with Docker
 
-### Build and start everything
-
 ```bash
+cp .env.example .env   # fill in JWT_SECRET and ADMIN_SIGNUP_CODE at minimum
 docker-compose up --build
 ```
 
-This boots up:
-- `frontend` on port **3000**
-- `backend`  on port **5000**
-- `mongo`    on port **27017** (optional — skip by commenting it out)
-
-### Stop
+Services:
+- Frontend → **http://localhost:3000**
+- Backend  → **http://localhost:5000**
+- Postgres → port 5432 (internal)
 
 ```bash
-docker-compose down
+docker-compose down        # stop
+docker-compose down -v     # stop + wipe DB volume
 ```
-
-### Build individual images
-
-```bash
-docker build -t cviator-frontend ./frontend
-docker build -t cviator-backend  ./backend
-```
-
----
-
-## CI/CD Pipeline (GitHub Actions)
-
-File: `.github/workflows/main.yml`
-
-The pipeline runs on every push to `main` and:
-
-1. **Checks out** the source code
-2. **Sets up Node.js 18**
-3. **Installs dependencies** for frontend and backend
-4. **Builds** the Next.js frontend (`npm run build`)
-5. **Builds Docker images** for both services
-6. *(Optional)* Pushes images to Docker Hub if secrets are set
-
-Configure the following repository secrets if you want to push images:
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
-
----
-
-## Deployment on AWS EC2
-
-### 1. Launch an EC2 Instance
-- AMI: Ubuntu 22.04 LTS
-- Instance type: `t2.medium` (Puppeteer/Chromium needs memory)
-- Security Group: allow inbound **22 (SSH)**, **3000**, **5000**
-
-### 2. SSH Into the Server
-
-```bash
-ssh -i your-key.pem ubuntu@<EC2-PUBLIC-IP>
-```
-
-### 3. Install Docker + Docker Compose
-
-```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y docker.io docker-compose git
-sudo usermod -aG docker ubuntu
-newgrp docker
-```
-
-### 4. Clone the Project
-
-```bash
-git clone https://github.com/<your-user>/<your-repo>.git
-cd <your-repo>
-```
-
-### 5. Launch the Stack
-
-```bash
-docker-compose up -d --build
-```
-
-### 6. Access the App
-
-Open your browser at:
-
-```
-http://<EC2-PUBLIC-IP>:3000
-```
-
-### 7. (Optional) Put it Behind Nginx + HTTPS
-- Install Nginx + Certbot
-- Reverse-proxy port 3000 to port 80/443
-- Issue a Let's Encrypt certificate
-
----
-
-## Terraform (Optional)
-
-A minimal Terraform script is provided in `terraform/main.tf` to provision an
-EC2 instance. Run:
-
-```bash
-cd terraform
-terraform init
-terraform apply
-```
-
-You must configure AWS credentials (`aws configure`) first.
 
 ---
 
 ## Environment Variables
 
-### Backend (`backend/.env`)
-```
-PORT=5000
-MONGO_URI=mongodb://localhost:27017/cviator
-USE_DB=false
+### Required (must be set before deploying)
+
+| Variable            | Description                                      |
+|---------------------|--------------------------------------------------|
+| `JWT_SECRET`        | Long random string for signing JWTs              |
+| `ADMIN_SIGNUP_CODE` | Secret code required to create an admin account  |
+| `DB_PASSWORD`       | Postgres password                                |
+
+Generate a JWT secret:
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-Set `USE_DB=true` only if you have MongoDB running.
+### Optional — SMTP (email verification & password reset)
 
-### Frontend (`frontend/.env.local`)
-```
-NEXT_PUBLIC_API_URL=http://localhost:5000
-```
-
-When running in Docker, this is automatically set to `http://backend:5000`
-via `docker-compose.yml`.
+| Variable    | Default                   | Description               |
+|-------------|---------------------------|---------------------------|
+| `SMTP_HOST` | *(empty)*                 | Leave blank in dev — links are logged to console instead |
+| `SMTP_PORT` | `587`                     |                           |
+| `SMTP_USER` |                           |                           |
+| `SMTP_PASS` |                           |                           |
+| `SMTP_FROM` | `noreply@cviator.local`   |                           |
 
 ---
 
-## AI Integration Placeholder
+## Auth Flows
 
-The backend exposes `POST /improve-text`. It currently echoes the input with a
-mock improvement. Swap in Anthropic/OpenAI/etc. inside `backend/routes/ai.js`
-where the `// TODO: integrate real AI API` comment lives.
+### Signup (Student)
+1. Fill form → POST `/api/auth/signup`
+2. Backend creates user, sends verification email (or logs link to console in dev)
+3. Frontend redirects to `/verify-email`
+4. User clicks link → `GET /api/auth/verify-email/:token` → redirected to `/login?verified=1`
+
+### Signup (Admin)
+1. Fill form + admin code → POST `/api/auth/signup`
+2. Immediately receives JWT and is redirected to `/admin`
+
+### Password Reset
+1. `/forgot-password` → POST `/api/auth/forgot-password` → email sent
+2. User clicks link → `/reset-password?token=...`
+3. POST `/api/auth/reset-password` → password updated → redirect to `/login`
 
 ---
 
-## License
+## Deployment on AWS EC2
 
-MIT — do whatever you want, a credit is appreciated.
-=======
-# Cviator
->>>>>>> dd7ce9e16d7a438fab36b9e5461fc2810fe72ce3
+1. Launch Ubuntu 22.04, `t2.medium` (Puppeteer needs memory), open ports 22/3000/5000
+2. Install Docker + Docker Compose
+3. Clone repo, create `.env` from `.env.example` with real secrets
+4. `docker-compose up -d --build`
+5. (Optional) Put Nginx in front and issue a Let's Encrypt certificate
+
+---
+
+## CI/CD (GitHub Actions)
+
+File: `.github/workflows/main.yml`
+
+On push to `main`:
+1. Install deps + build Next.js frontend
+2. Build Docker images
+3. *(Optional)* Push to Docker Hub if `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` secrets are set
+
+---
+
+## Known Limitations / Roadmap
+
+- No automated test suite (Jest + Supertest planned)
+- No automated deploy step in CI (SSH deploy job planned)
+- Schema uses `ADD COLUMN IF NOT EXISTS` for migrations; non-trivial changes need a migration tool
+- JWT logout is client-side only (no server-side revocation)
