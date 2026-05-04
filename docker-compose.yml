@@ -27,9 +27,10 @@ services:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-cviator}"]
-      interval: 5s
+      interval: 10s      # was 5s — reduced polling frequency to save resources
       timeout: 5s
       retries: 10
+      start_period: 10s  # give Postgres time to initialize before checks begin
     restart: unless-stopped
 
   # -------- Backend (Express + Puppeteer) --------
@@ -73,3 +74,4 @@ services:
 
 volumes:
   postgres-data:
+    driver: local  # explicit default — documents intent clearly
