@@ -262,12 +262,15 @@ router.post('/signup', async (req, res) => {
       );
     }
 
-    // Verification flows
-    let mail;
+    // Verification flows — create the token inside the transaction, but
+    // defer the actual email send until after COMMIT (same pattern as
+    // forgot-password/resend-verification): a slow/failing SMTP call
+    // shouldn't roll back an otherwise-successful signup.
+    let pendingSend = null;
     if (role === 'student') {
       const tok  = await createVerification(client, user.id, 'email_verify');
       const link = `${config.appUrl}/verify-email?token=${tok}`;
-      mail = await sendVerificationEmail(normEmail, fullName || firstName, link);
+      pendingSend = () => sendVerificationEmail(normEmail, fullName || firstName, link);
     } else if (role === 'admin' && !initialIsRoot) {
       // Admin signup → email goes to ROOT admin (not the requester).
       const root = (await client.query(
@@ -286,12 +289,7 @@ router.post('/signup', async (req, res) => {
         requesterEmail: normEmail,
       });
       const link = `${config.appUrl}/admin/approve?token=${tok}`;
-      mail = await sendAdminApprovalRequest(
-        root.email,
-        normEmail,
-        fullName || firstName,
-        link
-      );
+      pendingSend = () => sendAdminApprovalRequest(root.email, normEmail, fullName || firstName, link);
     }
 
     // Audit log: admin signup attempts (whether root or pending)
@@ -309,6 +307,18 @@ router.post('/signup', async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    // Account + token are already committed — a send failure here (bad
+    // SMTP creds, Gmail being slow/unreachable, etc.) shouldn't turn a
+    // successful signup into an error response.
+    let mail = null;
+    if (pendingSend) {
+      try {
+        mail = await pendingSend();
+      } catch (err) {
+        console.error('[auth] signup: verification email send failed:', err.message);
+      }
+    }
 
     // Response shape
     if (role === 'student') {
