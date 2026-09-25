@@ -431,7 +431,14 @@ router.post('/resend-verification', async (req, res) => {
     const link = `${config.appUrl}/verify-email?token=${tok}`;
 
     await client.query('COMMIT');
-    const mail = await sendVerificationEmail(user.email, user.full_name || user.first_name || '', link);
+    // Token is already committed — a send failure here (bad SMTP creds, etc.)
+    // shouldn't turn into a 500 for a request that actually succeeded.
+    let mail = null;
+    try {
+      mail = await sendVerificationEmail(user.email, user.full_name || user.first_name || '', link);
+    } catch (err) {
+      console.error('[auth] resend-verification: email send failed:', err.message);
+    }
     res.json({ ok: true, ...(mail?.devLink ? { devLink: mail.devLink } : {}) });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -492,7 +499,14 @@ router.post('/forgot-password', async (req, res) => {
     const link = `${config.appUrl}/reset-password?token=${tok}`;
 
     await client.query('COMMIT');
-    const mail = await sendPasswordResetEmail(user.email, user.full_name || user.first_name || '', link);
+    // Token is already committed — a send failure here (bad SMTP creds, etc.)
+    // shouldn't turn into a 500 for a request that actually succeeded.
+    let mail = null;
+    try {
+      mail = await sendPasswordResetEmail(user.email, user.full_name || user.first_name || '', link);
+    } catch (err) {
+      console.error('[auth] forgot-password: email send failed:', err.message);
+    }
     res.json({ ok: true, ...(mail?.devLink ? { devLink: mail.devLink } : {}) });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
