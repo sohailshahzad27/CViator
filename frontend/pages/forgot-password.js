@@ -64,6 +64,11 @@ export default function ForgotPasswordPage() {
               >
                 {busy ? 'Sending…' : 'Send reset link'}
               </button>
+              {busy && (
+                <p className="text-center text-xs text-slate-400">
+                  This can take up to a minute — please don't refresh.
+                </p>
+              )}
             </form>
             <p className="mt-5 text-center text-sm text-slate-500">
               <Link href="/login" className="font-medium text-slate-900 hover:underline">Back to sign in</Link>

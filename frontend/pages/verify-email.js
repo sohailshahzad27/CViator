@@ -105,14 +105,21 @@ export default function VerifyEmailPage() {
         )}
 
         {email && state !== 'resent' && (
-          <button
-            type="button"
-            onClick={handleResend}
-            disabled={state === 'resending'}
-            className="mt-4 w-full rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:opacity-60"
-          >
-            {state === 'resending' ? 'Sending…' : 'Resend verification email'}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={handleResend}
+              disabled={state === 'resending'}
+              className="mt-4 w-full rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:opacity-60"
+            >
+              {state === 'resending' ? 'Sending…' : 'Resend verification email'}
+            </button>
+            {state === 'resending' && (
+              <p className="mt-2 text-center text-xs text-slate-400">
+                This can take up to a minute — please don't refresh.
+              </p>
+            )}
+          </>
         )}
 
         <p className="mt-5 text-center text-sm text-slate-500">
