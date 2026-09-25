@@ -35,11 +35,8 @@ Thumbs.db
 *.pem
 *.key
 
-# Terraform state (contains secrets)
-terraform/.terraform/
-terraform/*.tfstate
-terraform/*.tfstate.backup
-terraform/.terraform.lock.hcl
-
 # Puppeteer / Chromium downloads
 .cache/
+
+# Database backups — contain real user data (emails, names, password hashes)
+backups/

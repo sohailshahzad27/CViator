@@ -9,15 +9,15 @@
 // Resolve the API base URL.
 //
 // Next.js bakes NEXT_PUBLIC_* into the JS bundle at *build* time, which breaks
-// when the same image is run on a different host (e.g. AWS EC2) — the browser
-// would try to hit `localhost:5000` on the *user's* machine.
+// when the same image is run on a different host — the browser would try to
+// hit `localhost:5000` on the *user's* machine.
 //
 // Strategy:
 //   1. If NEXT_PUBLIC_API_URL is set to a real value (not the localhost default),
 //      trust it — useful when the API lives on a separate domain.
 //   2. Otherwise, in the browser, compute the URL from window.location so the
 //      backend is always reached at `<same-host>:5000`. This makes one Docker
-//      image work on localhost, EC2, or any other host with no rebuild.
+//      image work on localhost or any deployed host with no rebuild.
 //   3. On the server (SSR), fall back to the env var or localhost.
 const ENV_API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 

@@ -41,7 +41,7 @@ app.set('trust proxy', 1);
 
 // CORS — accept a comma-separated list in FRONTEND_URL. If not set, or set to
 // '*', reflect any origin. This lets the same image serve localhost dev AND
-// EC2 deploys (where the origin is http://<EC2-IP>:3000) without a rebuild.
+// a deployed server (where the origin is http://<server-ip>:3000) without a rebuild.
 const allowedOrigins = (config.frontendUrl || '')
   .split(',')
   .map(o => o.trim())
