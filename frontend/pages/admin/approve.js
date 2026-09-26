@@ -1,50 +1,109 @@
 // frontend/pages/admin/approve.js
-// Public page reached by clicking the link in the root-admin's email.
-// Calls GET /api/admin/approve/:token. Token is consumed atomically server-side.
+// Public page reached from the root admin's approval email.
+// Calls GET /api/admin/approve/:token — the token is consumed atomically
+// server-side, so refreshing this page will (correctly) report it as used.
 
 import { useEffect, useState } from 'react';
-import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { approveAdminByToken } from '../../services/auth';
-import { AuthShell } from '../login';
+import AuthLayout from '../../components/AuthLayout';
+import { Alert, Button, Spinner } from '../../components/ui';
 
 export default function AdminApprovePage() {
   const router = useRouter();
   const { token } = router.query;
-  const [state,   setState]   = useState('idle');     // idle | working | done | error
+
+  const [state, setState] = useState('working'); // working | done | error | missing
   const [message, setMessage] = useState('');
-  const [email,   setEmail]   = useState('');
+  const [approvedEmail, setApprovedEmail] = useState('');
 
   useEffect(() => {
-    if (!token) return;
+    if (!router.isReady) return;
+    if (!token) {
+      setState('missing');
+      return;
+    }
     setState('working');
     approveAdminByToken(token)
-      .then((r) => { setState('done'); setEmail(r.email || ''); })
-      .catch((err) => { setState('error'); setMessage(err.message || 'Approval failed.'); });
-  }, [token]);
+      .then((r) => {
+        setState('done');
+        setApprovedEmail(r?.email || '');
+      })
+      .catch((err) => {
+        setState('error');
+        setMessage(err.message || 'This approval link is invalid or has expired.');
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.isReady, token]);
+
+  const titles = {
+    working: 'Approving access…',
+    done: 'Access approved',
+    error: 'Link no longer valid',
+    missing: 'Nothing to approve',
+  };
 
   return (
-    <>
-      <Head><title>Approve admin — Cviator Pro</title></Head>
-      <AuthShell title="Admin approval">
-        {state === 'working' && (
-          <div className="flex justify-center py-6">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-slate-700" />
-          </div>
-        )}
-        {state === 'done' && (
-          <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            Approved. {email ? `${email} can now sign in.` : 'The admin can now sign in.'}
-          </p>
-        )}
-        {state === 'error' && (
-          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{message}</p>
-        )}
-        <p className="mt-5 text-center text-sm text-slate-500">
-          <Link href="/admin" className="font-medium text-slate-900 hover:underline">Go to admin dashboard</Link>
+    <AuthLayout
+      pageTitle="Approve staff access"
+      title={titles[state]}
+      subtitle={
+        state === 'working'
+          ? 'Confirming the approval link.'
+          : state === 'done'
+          ? 'The account can now sign in to the dashboard.'
+          : undefined
+      }
+      footer={
+        <p className="text-sm text-ink-muted">
+          <Link href="/admin" className="font-medium text-accent underline decoration-accent/30 underline-offset-2 hover:decoration-accent">
+            Go to the dashboard
+          </Link>
         </p>
-      </AuthShell>
-    </>
+      }
+    >
+      {state === 'working' && (
+        <div className="flex justify-center py-6">
+          <Spinner className="h-6 w-6" label="Approving" />
+        </div>
+      )}
+
+      {state === 'done' && (
+        <Alert tone="success" title="Approved">
+          {approvedEmail ? (
+            <>
+              <span className="font-medium">{approvedEmail}</span> now has staff access and can
+              sign in.
+            </>
+          ) : (
+            'The requester now has staff access and can sign in.'
+          )}
+        </Alert>
+      )}
+
+      {state === 'error' && (
+        <>
+          <Alert tone="danger">{message}</Alert>
+          <p className="mt-4 text-xs leading-relaxed text-ink-muted">
+            Approval links are single-use and expire after 48 hours. If this one was already used,
+            the account may already be active — check the pending requests panel on the dashboard.
+          </p>
+        </>
+      )}
+
+      {state === 'missing' && (
+        <>
+          <Alert tone="info">
+            This page needs an approval token from the email the root administrator received.
+          </Alert>
+          <div className="mt-5">
+            <Button variant="secondary" size="lg" className="w-full" onClick={() => router.push('/admin')}>
+              Open the dashboard instead
+            </Button>
+          </div>
+        </>
+      )}
+    </AuthLayout>
   );
 }

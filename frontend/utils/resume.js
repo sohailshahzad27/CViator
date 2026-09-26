@@ -51,3 +51,46 @@ export function getInitials(name = '') {
   if (!words.length) return 'CP';
   return words.map((w) => w[0].toUpperCase()).join('');
 }
+
+const hasText = (v) => !!v && String(v).trim().length > 0;
+
+/**
+ * True when a resume carries no meaningful content yet. Drives the demo
+ * preview and the section-completeness indicator, and is shared by both
+ * templates so they agree on what "empty" means.
+ */
+export function isEffectivelyEmpty(r) {
+  if (!r) return true;
+  if (
+    hasText(r.name) || hasText(r.email) || hasText(r.phone) || hasText(r.location) ||
+    hasText(r.linkedin) || hasText(r.github) || hasText(r.others) ||
+    hasText(r.summary) || hasText(r.photo)
+  ) return false;
+  if ((r.education  || []).some((e) => hasText(e?.school)  || hasText(e?.degree))) return false;
+  if ((r.experience || []).some((e) => hasText(e?.company) || hasText(e?.role)))   return false;
+  if ((r.projects   || []).some((p) => hasText(p?.title)   || hasText(p?.description))) return false;
+  if ((r.skills     || []).some((s) => hasText(typeof s === 'string' ? s : s?.name))) return false;
+  if ((r.customSections || []).some((sec) =>
+    hasText(sec?.title) || hasText(sec?.content) ||
+    (sec?.items || []).some((i) => hasText(i?.name) || hasText(i?.description))
+  )) return false;
+  return true;
+}
+
+/**
+ * Per-section completion, used by the builder's section navigator.
+ * Returns [{ key, label, done }] in the order the CV renders them.
+ */
+export function sectionStatus(r = {}) {
+  const list = (v) => (Array.isArray(v) ? v : []);
+  return [
+    { key: 'personal',   label: 'Personal details', done: hasText(r.name) && hasText(r.email) },
+    { key: 'links',      label: 'Social links',     done: hasText(r.linkedin) || hasText(r.github) || hasText(r.others) },
+    { key: 'summary',    label: 'Objective',        done: hasText(r.summary) },
+    { key: 'experience', label: 'Experience',       done: list(r.experience).some((e) => hasText(e?.company) || hasText(e?.role)) },
+    { key: 'education',  label: 'Education',        done: list(r.education).some((e) => hasText(e?.school)) },
+    { key: 'projects',   label: 'Projects',         done: list(r.projects).some((p) => hasText(p?.title)) },
+    { key: 'skills',     label: 'Skills',           done: list(r.skills).some((s) => hasText(typeof s === 'string' ? s : s?.name)) },
+    { key: 'custom',     label: 'Custom sections',  done: list(r.customSections).some((s) => hasText(s?.title)) },
+  ];
+}

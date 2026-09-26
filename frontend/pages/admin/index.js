@@ -1,424 +1,772 @@
 // frontend/pages/admin/index.js
-// Admin dashboard — visible only to authenticated admins (status=active).
-// Root admins additionally see the "Pending admin requests" panel.
+// Placement-office dashboard: the student register, who has finished a CV,
+// and bulk export. Root admins additionally review staff access requests.
+//
+// Fetching: filters are debounced into `appliedFilters`, and exactly one
+// request runs per applied change (the first load is not debounced). Rows
+// stay on screen while a refresh is in flight so typing in the search box
+// doesn't tear the table down.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import Head from 'next/head';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useAuth } from '../../hooks/useAuth';
 import {
-  fetchUsers, fetchFilters, downloadUserPdf, downloadAllCvs,
-  fetchAdminRequests, approveAdminRequest, rejectAdminRequest,
+  fetchUsers,
+  fetchFilters,
+  downloadUserPdf,
+  downloadAllCvs,
+  fetchAdminRequests,
+  approveAdminRequest,
+  rejectAdminRequest,
 } from '../../services/admin';
+import { cn } from '../../utils/cn';
+import { DEMO_ADMIN } from '../../utils/demoData';
+import AppShell from '../../components/AppShell';
+import {
+  Alert,
+  Badge,
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  Panel,
+  PanelHeader,
+  PageHeader,
+  SelectField,
+  StatStrip,
+  StatTile,
+  StatusDot,
+  TableSkeleton,
+  TextField,
+  useToast,
+} from '../../components/ui';
+
+const EMPTY_FILTERS = {
+  role: '',
+  status: '',
+  facultyId: '',
+  departmentId: '',
+  batch: '',
+  q: '',
+};
+
+const FILTER_LABELS = {
+  role: 'Role',
+  status: 'Status',
+  facultyId: 'Faculty',
+  departmentId: 'Department',
+  batch: 'Batch',
+  q: 'Search',
+};
 
 function fmtDate(iso) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  return new Date(iso).toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function fmtRelative(iso) {
+  if (!iso) return null;
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (Number.isNaN(days)) return null;
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return months < 12 ? `${months}mo ago` : `${Math.floor(days / 365)}y ago`;
 }
 
 export default function AdminPage() {
   const router = useRouter();
   const { status, user, logout } = useAuth();
+  const { toast } = useToast();
 
-  const [state,         setState]         = useState('loading');
-  const [users,         setUsers]         = useState([]);
-  const [pagination,    setPagination]    = useState({ page: 1, pages: 1, total: 0 });
-  const [downloadingId, setDownloadingId] = useState(null);
-  const [downloadingAll,setDownloadingAll]= useState(false);
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS);
+  const [page, setPage] = useState(1);
 
-  // Cascading filters
+  const [users, setUsers] = useState([]);
+  const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0, withCv: 0 });
   const [filterOptions, setFilterOptions] = useState({ faculties: [], batches: [] });
-  const [filters, setFilters] = useState({
-    role: '', status: '', facultyId: '', departmentId: '', batch: '', q: '',
-  });
-
-  // Root-only: pending admin requests
   const [adminRequests, setAdminRequests] = useState([]);
-  const [reqBusyId,     setReqBusyId]     = useState(null);
 
-  // Auth gates
+  const [view, setView] = useState('loading'); // loading | ready | error | forbidden
+  const [refreshing, setRefreshing] = useState(false);
+  const [downloadingId, setDownloadingId] = useState(null);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [reqBusyId, setReqBusyId] = useState(null);
+  const [rejectTarget, setRejectTarget] = useState(null);
+
+  const isAdmin = status === 'authenticated' && !!user?.isAdmin;
+
+  // ── Auth gates ──────────────────────────────────────────────
   useEffect(() => {
     if (status === 'unauthenticated') router.replace('/login');
     else if (status === 'authenticated' && !user?.isAdmin) router.replace('/');
   }, [status, user, router]);
 
-  const loadPage = useCallback(async (page = 1, override = filters) => {
-    setState('loading');
-    try {
-      const data = await fetchUsers({ page, ...override });
-      setUsers(data.users);
-      setPagination(data.pagination);
-      setState('ready');
-    } catch (err) {
-      if (err.status === 403) setState('forbidden');
-      else { console.error(err); setState('error'); }
+  // ── Debounce filter edits into appliedFilters ───────────────
+  const firstFilterRun = useRef(true);
+  useEffect(() => {
+    if (firstFilterRun.current) {
+      firstFilterRun.current = false;
+      return undefined; // initial fetch is driven by appliedFilters' initial value
     }
+    const t = setTimeout(() => {
+      setAppliedFilters(filters);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
   }, [filters]);
 
-  const loadAdminRequests = useCallback(async () => {
-    if (!user?.isRootAdmin) return;
+  // ── Single fetch per applied change ─────────────────────────
+  const loadedOnce = useRef(false);
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    let cancelled = false;
+
+    (async () => {
+      if (loadedOnce.current) setRefreshing(true);
+      try {
+        const data = await fetchUsers({ page, ...appliedFilters });
+        if (cancelled) return;
+        setUsers(data.users || []);
+        setPagination(data.pagination || { page: 1, pages: 1, total: 0, withCv: 0 });
+        setView('ready');
+        loadedOnce.current = true;
+      } catch (err) {
+        if (cancelled) return;
+        if (err.status === 403) setView('forbidden');
+        else {
+          console.error('[admin] load failed:', err);
+          setView('error');
+        }
+      } finally {
+        if (!cancelled) setRefreshing(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, page, appliedFilters]);
+
+  // ── Filter options + pending requests (once) ────────────────
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    let cancelled = false;
+
+    fetchFilters()
+      .then((d) => {
+        if (!cancelled) setFilterOptions(d || { faculties: [], batches: [] });
+      })
+      .catch(() => {});
+
+    if (user?.isRootAdmin) {
+      fetchAdminRequests()
+        .then((r) => {
+          if (!cancelled) setAdminRequests(r.requests || []);
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, user?.isRootAdmin]);
+
+  const reloadRequests = useCallback(async () => {
     try {
       const r = await fetchAdminRequests();
       setAdminRequests(r.requests || []);
     } catch (err) {
-      console.error('[admin] fetch admin-requests failed:', err);
+      console.error('[admin] reload requests failed:', err);
     }
-  }, [user]);
+  }, []);
 
-  useEffect(() => {
-    if (status !== 'authenticated' || !user?.isAdmin) return;
-    loadPage(1);
-    fetchFilters().then(setFilterOptions).catch(() => {});
-    loadAdminRequests();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, user]);
-
-  useEffect(() => {
-    if (status !== 'authenticated' || !user?.isAdmin) return;
-    const t = setTimeout(() => loadPage(1, filters), 300);
-    return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters]);
-
-  const setFilter = (key, value) => setFilters((f) => {
-    const next = { ...f, [key]: value };
-    // Clear department when faculty changes
-    if (key === 'facultyId') next.departmentId = '';
-    return next;
-  });
+  // ── Derived ─────────────────────────────────────────────────
+  const activeFilters = useMemo(
+    () => Object.entries(appliedFilters).filter(([, v]) => v),
+    [appliedFilters]
+  );
+  const hasFilters = activeFilters.length > 0;
 
   const selectedFaculty = useMemo(
     () => filterOptions.faculties.find((f) => String(f.id) === String(filters.facultyId)),
     [filterOptions, filters.facultyId]
   );
-  const showDepartmentFilter = selectedFaculty && selectedFaculty.departments.length > 1;
+  const showDepartmentFilter = !!selectedFaculty && selectedFaculty.departments.length > 1;
 
-  const activeFilterCount = useMemo(
-    () => Object.values(filters).filter(Boolean).length,
-    [filters]
+  // Demo fallback. A fresh deployment is never literally empty here — the
+  // admin reading this page is themselves a record — so "nothing to show"
+  // means no student has signed up yet. Guarded by total <= users.length so
+  // a later page of a large register can't be mistaken for an empty one.
+  const noStudentsYet =
+    users.length > 0 &&
+    pagination.total <= users.length &&
+    users.every((u) => u.isAdmin);
+  const showDemo =
+    view === 'ready' && !hasFilters && (users.length === 0 || noStudentsYet);
+  const rows = showDemo ? DEMO_ADMIN.users : users;
+  const stats = showDemo ? DEMO_ADMIN.pagination : pagination;
+  const requests = showDemo && user?.isRootAdmin ? DEMO_ADMIN.adminRequests : adminRequests;
+  const options = showDemo ? DEMO_ADMIN.filterOptions : filterOptions;
+
+  const setFilter = useCallback((key, value) => {
+    setFilters((f) => {
+      const next = { ...f, [key]: value };
+      if (key === 'facultyId') next.departmentId = '';
+      return next;
+    });
+  }, []);
+
+  const clearFilters = useCallback(() => setFilters(EMPTY_FILTERS), []);
+
+  const clearOne = useCallback((key) => {
+    setFilters((f) => ({ ...f, [key]: '', ...(key === 'facultyId' ? { departmentId: '' } : {}) }));
+  }, []);
+
+  const filterChipLabel = useCallback(
+    (key, value) => {
+      if (key === 'facultyId') {
+        const f = options.faculties.find((x) => String(x.id) === String(value));
+        return f ? f.code || f.name : value;
+      }
+      if (key === 'departmentId') {
+        const d = options.faculties
+          .flatMap((x) => x.departments || [])
+          .find((x) => String(x.id) === String(value));
+        return d ? d.name : value;
+      }
+      if (key === 'role') return value === 'admin' ? 'Staff' : 'Students';
+      return value;
+    },
+    [options]
   );
 
-  const handleDownload = useCallback(async (u) => {
-    setDownloadingId(u.id);
-    try {
-      const filename = [u.firstName, u.lastName].filter(Boolean).join('_')
-        || u.fullName || u.email || 'resume';
-      await downloadUserPdf(u.id, { template: 'classic', filename });
-    } catch (err) {
-      alert('Could not download PDF.');
-    } finally { setDownloadingId(null); }
-  }, []);
+  // ── Actions ─────────────────────────────────────────────────
+  const handleDownload = useCallback(
+    async (u) => {
+      setDownloadingId(u.id);
+      try {
+        const filename =
+          [u.firstName, u.lastName].filter(Boolean).join('_') || u.fullName || u.email || 'resume';
+        await downloadUserPdf(u.id, { template: 'classic', filename });
+      } catch (err) {
+        toast({
+          tone: 'danger',
+          title: 'Could not download that CV',
+          description: err.message || 'Please try again.',
+        });
+      } finally {
+        setDownloadingId(null);
+      }
+    },
+    [toast]
+  );
 
   const handleDownloadAll = useCallback(async () => {
     setDownloadingAll(true);
     try {
       await downloadAllCvs({
-        facultyId: filters.facultyId, departmentId: filters.departmentId,
-        batch: filters.batch, q: filters.q, template: 'classic',
+        facultyId: appliedFilters.facultyId,
+        departmentId: appliedFilters.departmentId,
+        batch: appliedFilters.batch,
+        q: appliedFilters.q,
+        template: 'classic',
       });
+      toast({ tone: 'success', title: 'ZIP downloaded' });
     } catch (err) {
-      alert(err.message || 'Could not download CVs.');
-    } finally { setDownloadingAll(false); }
-  }, [filters]);
+      toast({
+        tone: 'danger',
+        title: 'Bulk export failed',
+        description: err.message || 'Please try again.',
+      });
+    } finally {
+      setDownloadingAll(false);
+    }
+  }, [appliedFilters, toast]);
 
-  const handleApproveAdmin = async (id) => {
-    setReqBusyId(id);
-    try { await approveAdminRequest(id); await loadAdminRequests(); }
-    catch (err) { alert(err.message || 'Approval failed.'); }
-    finally { setReqBusyId(null); }
-  };
-  const handleRejectAdmin = async (id) => {
-    if (!confirm('Reject this admin request? The pending account will be deleted.')) return;
-    setReqBusyId(id);
-    try { await rejectAdminRequest(id); await loadAdminRequests(); }
-    catch (err) { alert(err.message || 'Reject failed.'); }
-    finally { setReqBusyId(null); }
-  };
+  const handleApprove = useCallback(
+    async (req) => {
+      setReqBusyId(req.id);
+      try {
+        await approveAdminRequest(req.id);
+        await reloadRequests();
+        toast({ tone: 'success', title: 'Access approved', description: req.email });
+      } catch (err) {
+        toast({ tone: 'danger', title: 'Approval failed', description: err.message });
+      } finally {
+        setReqBusyId(null);
+      }
+    },
+    [reloadRequests, toast]
+  );
 
-  if (status === 'loading') {
-    return <Shell user={user} onLogout={() => logout().then(() => router.replace('/login'))}><Spinner /></Shell>;
-  }
+  const confirmReject = useCallback(async () => {
+    if (!rejectTarget) return;
+    setReqBusyId(rejectTarget.id);
+    try {
+      await rejectAdminRequest(rejectTarget.id);
+      await reloadRequests();
+      toast({ tone: 'success', title: 'Request rejected', description: rejectTarget.email });
+      setRejectTarget(null);
+    } catch (err) {
+      toast({ tone: 'danger', title: 'Could not reject', description: err.message });
+    } finally {
+      setReqBusyId(null);
+    }
+  }, [rejectTarget, reloadRequests, toast]);
 
-  if (state === 'forbidden') {
+  const handleLogout = useCallback(async () => {
+    await logout();
+    router.replace('/login');
+  }, [logout, router]);
+
+  // ── Render ──────────────────────────────────────────────────
+  if (status === 'loading' || (status === 'authenticated' && !user)) {
     return (
-      <Shell user={user} onLogout={() => logout().then(() => router.replace('/login'))}>
-        <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-center">
-          <p className="text-sm font-semibold text-red-700">Access denied</p>
-          <p className="mt-1 text-xs text-red-500">Your account does not have admin privileges.</p>
-        </div>
-      </Shell>
+      <div className="flex min-h-full items-center justify-center bg-paper px-6">
+        <p className="text-sm text-ink-muted">Checking your access…</p>
+      </div>
     );
   }
+  if (status !== 'authenticated') return null;
+
+  const completion = stats.total > 0 ? Math.round((stats.withCv / stats.total) * 100) : 0;
 
   return (
-    <Shell user={user} onLogout={() => logout().then(() => router.replace('/login'))}>
-
-      {/* Root admin: pending admin requests */}
-      {user?.isRootAdmin && adminRequests.length > 0 && (
-        <section className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <h2 className="text-sm font-semibold text-amber-900">
-            Pending admin requests ({adminRequests.length})
-          </h2>
-          <div className="mt-3 space-y-2">
-            {adminRequests.map((r) => (
-              <div key={r.id} className="flex items-center justify-between rounded border border-amber-200 bg-white px-3 py-2">
-                <div>
-                  <div className="text-sm font-medium text-slate-900">{r.full_name || `${r.first_name || ''} ${r.last_name || ''}`.trim() || '(no name)'}</div>
-                  <div className="text-xs text-slate-500">{r.email} · requested {fmtDate(r.created_at)}</div>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleApproveAdmin(r.id)}
-                    disabled={reqBusyId === r.id}
-                    className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-                  >Approve</button>
-                  <button
-                    type="button"
-                    onClick={() => handleRejectAdmin(r.id)}
-                    disabled={reqBusyId === r.id}
-                    className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-slate-300 disabled:opacity-60"
-                  >Reject</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <div className="mb-5 flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900">Users</h1>
-          {state === 'ready' && (
-            <p className="mt-0.5 text-sm text-slate-500">
-              {pagination.total} matching user{pagination.total === 1 ? '' : 's'}
-              {activeFilterCount > 0 && ' (filtered)'}
-              {' · '}page {pagination.page} of {pagination.pages}
-            </p>
-          )}
-        </div>
-        {state === 'ready' && pagination.total > 0 && (
-          <button
-            type="button"
+    <AppShell
+      title="Student records"
+      context="Admin"
+      user={user}
+      onLogout={handleLogout}
+      width="wide"
+    >
+      <PageHeader
+        eyebrow="Placement office"
+        title="Student records"
+        description="Every account on the CV portal, who has finished their CV, and bulk export for the batches you need."
+        actions={
+          <Button
+            variant="primary"
             onClick={handleDownloadAll}
-            disabled={downloadingAll}
-            className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60"
+            loading={downloadingAll}
+            disabled={showDemo || stats.total === 0}
+            title={showDemo ? 'No real records to export yet' : undefined}
           >
-            {downloadingAll ? 'Bundling…' : `Download all ${activeFilterCount > 0 ? 'filtered ' : ''}(${pagination.total}) as ZIP`}
-          </button>
-        )}
-      </div>
+            {downloadingAll
+              ? 'Bundling…'
+              : `Export ${hasFilters ? 'filtered ' : ''}CVs as ZIP`}
+          </Button>
+        }
+      />
 
-      {/* Filter bar */}
-      <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-5">
-        <FilterInput
-          placeholder="Search email / name / reg"
-          value={filters.q}
-          onChange={(v) => setFilter('q', v)}
-        />
-        <FilterSelect
-          value={filters.role}
-          onChange={(v) => setFilter('role', v)}
-          placeholder="All roles"
-          options={[
-            { value: 'student', label: 'Students' },
-            { value: 'admin',   label: 'Admins'   },
-          ]}
-        />
-        <FilterSelect
-          value={filters.facultyId}
-          onChange={(v) => setFilter('facultyId', v)}
-          placeholder="All faculties"
-          options={filterOptions.faculties.map((f) => ({ value: String(f.id), label: f.code }))}
-        />
-        {showDepartmentFilter ? (
-          <FilterSelect
-            value={filters.departmentId}
-            onChange={(v) => setFilter('departmentId', v)}
-            placeholder="All departments"
-            options={selectedFaculty.departments.map((d) => ({ value: String(d.id), label: d.name }))}
+      {view === 'forbidden' ? (
+        <Panel className="mt-7">
+          <EmptyState
+            title="Access denied"
+            description="This account doesn't have admin privileges. If that's unexpected, ask the root administrator to review your access."
+            icon={
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="5" y="10.5" width="14" height="9" rx="2" />
+                <path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5" strokeLinecap="round" />
+              </svg>
+            }
           />
-        ) : <span className="hidden sm:block" />}
-        <FilterSelect
-          value={filters.batch}
-          onChange={(v) => setFilter('batch', v)}
-          placeholder="All batches"
-          options={filterOptions.batches.map((b) => ({ value: b, label: b }))}
-        />
-        {activeFilterCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setFilters({ role: '', status: '', facultyId: '', departmentId: '', batch: '', q: '' })}
-            className="col-span-full text-left text-xs text-slate-500 underline hover:text-slate-900 sm:col-auto"
-          >Clear filters</button>
-        )}
-      </div>
-
-      {state === 'loading' ? (
-        <TableSkeleton />
-      ) : state === 'error' ? (
-        <div className="rounded-lg border border-slate-200 bg-white p-6 text-center">
-          <p className="text-sm text-slate-700">Failed to load data.</p>
-          <button type="button" onClick={() => loadPage(pagination.page)}
-            className="mt-3 text-xs text-slate-500 underline hover:text-slate-900">Retry</button>
-        </div>
-      ) : users.length === 0 ? (
-        <Empty text="No users match those filters." />
+        </Panel>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  <Th>Name / Email</Th>
-                  <Th>Role</Th>
-                  <Th>Faculty / Dept</Th>
-                  <Th>Batch / Reg</Th>
-                  <Th>Joined</Th>
-                  <Th><span className="sr-only">Actions</span></Th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {users.map((u) => (
-                  <tr key={u.id} className="transition-colors hover:bg-slate-50">
-                    <Td>
-                      <div className="font-medium text-slate-900">{u.fullName || '—'}</div>
-                      <div className="text-xs text-slate-500">{u.email}</div>
-                    </Td>
-                    <Td><RoleBadge user={u} /></Td>
-                    <Td className="text-xs">
-                      {u.facultyName || <span className="text-slate-400">—</span>}
-                      {u.departmentName && u.departmentName !== u.facultyName && (
-                        <div className="text-slate-500">{u.departmentName}</div>
-                      )}
-                    </Td>
-                    <Td className="text-xs">
-                      {u.batch ? `Batch ${u.batch}` : null}
-                      {u.regNo  ? <div className="text-slate-500">{u.regNo}</div> : null}
-                      {!u.batch && !u.regNo && <span className="text-slate-400">—</span>}
-                    </Td>
-                    <Td className="text-xs text-slate-600">{fmtDate(u.createdAt)}</Td>
-                    <Td>
-                      <div className="flex justify-end whitespace-nowrap">
-                        {!u.isAdmin ? (
-                          <button
-                            type="button"
-                            onClick={() => handleDownload(u)}
-                            disabled={downloadingId === u.id}
-                            className="rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:opacity-60"
-                          >{downloadingId === u.id ? 'Generating…' : 'Download PDF'}</button>
-                        ) : (
-                          <span className="text-xs text-slate-400">—</span>
-                        )}
-                      </div>
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {pagination.pages > 1 && (
-            <div className="mt-4 flex items-center justify-center gap-2">
-              <PaginationBtn disabled={pagination.page <= 1} onClick={() => loadPage(pagination.page - 1)}>← Prev</PaginationBtn>
-              <span className="text-xs text-slate-500">{pagination.page} / {pagination.pages}</span>
-              <PaginationBtn disabled={pagination.page >= pagination.pages} onClick={() => loadPage(pagination.page + 1)}>Next →</PaginationBtn>
-            </div>
+          {showDemo && (
+            <Alert tone="warning" title="Showing sample data" className="mt-7">
+              No accounts have been created yet, so the dashboard is filled with example records to
+              show the layout. They disappear as soon as the first real student signs up, and none
+              of the row actions are live.
+            </Alert>
           )}
-        </>
-      )}
-    </Shell>
-  );
-}
 
-// ── Presentational helpers ────────────────────────────────────────
+          {/* ── Figures ──────────────────────────────────────── */}
+          <StatStrip className="mt-7">
+            <StatTile
+              label="Records"
+              value={stats.total.toLocaleString('en-GB')}
+              sub={hasFilters ? 'matching your filters' : 'students and staff'}
+            />
+            <StatTile
+              label="CVs complete"
+              value={stats.withCv?.toLocaleString('en-GB') ?? '—'}
+              meter={completion}
+              sub={`${completion}% of records`}
+            />
+            {user?.isRootAdmin ? (
+              <StatTile
+                label="Pending approvals"
+                value={requests.length}
+                tone={requests.length > 0 ? 'attention' : 'default'}
+                sub={requests.length > 0 ? 'staff awaiting review' : 'nothing to review'}
+              />
+            ) : (
+              <StatTile
+                label="Faculties"
+                value={options.faculties.length}
+                sub="represented in the register"
+              />
+            )}
+            <StatTile
+              label="Batches"
+              value={options.batches.length}
+              sub="with at least one account"
+            />
+          </StatStrip>
 
-function Shell({ children, user, onLogout }) {
-  return (
-    <>
-      <Head><title>Admin — Cviator Pro</title></Head>
-      <div className="min-h-screen bg-slate-50">
-        <header className="border-b border-slate-200 bg-white">
-          <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3 sm:px-6">
-            <div className="flex h-7 w-7 items-center justify-center rounded bg-slate-900 text-xs font-bold text-white">C</div>
-            <span className="text-sm font-semibold text-slate-900">
-              Cviator <span className="font-normal text-slate-500">Admin</span>
-              {user?.isRootAdmin && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">ROOT</span>}
-            </span>
-            <div className="ml-auto flex items-center gap-3">
-              {user && <span className="hidden text-xs text-slate-500 sm:inline">{user.email}</span>}
-              {onLogout && (
-                <button type="button" onClick={onLogout}
-                  className="rounded border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
-                  Sign out
-                </button>
+          {/* ── Root admin: pending access requests ──────────── */}
+          {user?.isRootAdmin && requests.length > 0 && (
+            <Panel className="mt-6 border-ochre-line bg-ochre-soft/40">
+              <PanelHeader
+                title={`Staff access requests (${requests.length})`}
+                description="Approve only people you recognise — admins can read and export every student CV."
+              />
+              <ul className="divide-y divide-ochre-line/60">
+                {requests.map((r) => (
+                  <li
+                    key={r.id}
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-ink">
+                        {r.full_name ||
+                          `${r.first_name || ''} ${r.last_name || ''}`.trim() ||
+                          '(no name given)'}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-ink-muted">
+                        {r.email} · requested {fmtDate(r.created_at)}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => handleApprove(r)}
+                        loading={reqBusyId === r.id}
+                        disabled={showDemo}
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setRejectTarget(r)}
+                        disabled={showDemo || reqBusyId === r.id}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          )}
+
+          {/* ── Register ─────────────────────────────────────── */}
+          <Panel className="mt-6 overflow-hidden">
+            <div className="border-b border-line px-4 py-3 sm:px-5">
+              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                <TextField
+                  value={filters.q}
+                  onChange={(v) => setFilter('q', v)}
+                  placeholder="Search name, email or reg no"
+                  aria-label="Search records"
+                  className="lg:col-span-2"
+                  leading={
+                    <svg viewBox="0 0 16 16" aria-hidden className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+                      <circle cx="7" cy="7" r="4.25" />
+                      <path d="M10.5 10.5L14 14" strokeLinecap="round" />
+                    </svg>
+                  }
+                />
+                <SelectField
+                  value={filters.role}
+                  onChange={(v) => setFilter('role', v)}
+                  placeholder="All roles"
+                  aria-label="Filter by role"
+                  options={[
+                    { value: 'student', label: 'Students' },
+                    { value: 'admin', label: 'Staff' },
+                  ]}
+                />
+                <SelectField
+                  value={filters.facultyId}
+                  onChange={(v) => setFilter('facultyId', v)}
+                  placeholder="All faculties"
+                  aria-label="Filter by faculty"
+                  options={options.faculties.map((f) => ({
+                    value: String(f.id),
+                    label: f.code || f.name,
+                  }))}
+                />
+                {showDepartmentFilter && (
+                  <SelectField
+                    value={filters.departmentId}
+                    onChange={(v) => setFilter('departmentId', v)}
+                    placeholder="All departments"
+                    aria-label="Filter by department"
+                    options={selectedFaculty.departments.map((d) => ({
+                      value: String(d.id),
+                      label: d.name,
+                    }))}
+                  />
+                )}
+                <SelectField
+                  value={filters.batch}
+                  onChange={(v) => setFilter('batch', v)}
+                  placeholder="All batches"
+                  aria-label="Filter by batch"
+                  options={options.batches.map((b) => ({ value: b, label: b }))}
+                />
+              </div>
+
+              {hasFilters && (
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                  <span className="text-2xs uppercase tracking-wide text-ink-muted">Filtered by</span>
+                  {activeFilters.map(([key, value]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => clearOne(key)}
+                      className="group inline-flex items-center gap-1.5 rounded border border-line bg-inset px-1.5 py-0.5 text-2xs font-medium text-ink-soft transition-colors hover:border-line-strong hover:text-ink"
+                    >
+                      <span className="text-ink-muted">{FILTER_LABELS[key]}:</span>
+                      {filterChipLabel(key, value)}
+                      <svg viewBox="0 0 16 16" aria-hidden className="h-2.5 w-2.5 text-ink-muted group-hover:text-danger" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+                      </svg>
+                      <span className="sr-only">Remove filter</span>
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="ml-1 text-2xs font-medium text-accent underline decoration-accent/30 underline-offset-2 hover:decoration-accent"
+                  >
+                    Clear all
+                  </button>
+                </div>
               )}
             </div>
-          </div>
-        </header>
-        <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">{children}</main>
-      </div>
-    </>
+
+            {view === 'loading' ? (
+              <TableSkeleton rows={8} />
+            ) : view === 'error' ? (
+              <EmptyState
+                title="Couldn't load the register"
+                description="The request to the server failed. Check that the API is reachable and try again."
+                action={
+                  <Button variant="secondary" onClick={() => setAppliedFilters({ ...appliedFilters })}>
+                    Retry
+                  </Button>
+                }
+              />
+            ) : rows.length === 0 ? (
+              <EmptyState
+                title={hasFilters ? 'No records match those filters' : 'No accounts yet'}
+                description={
+                  hasFilters
+                    ? 'Try widening the search, or clear the filters to see the whole register.'
+                    : 'Once students sign up with their GIKI email they appear here automatically.'
+                }
+                action={
+                  hasFilters ? (
+                    <Button variant="secondary" onClick={clearFilters}>
+                      Clear filters
+                    </Button>
+                  ) : null
+                }
+              />
+            ) : (
+              <>
+                <div
+                  className={cn(
+                    'overflow-x-auto transition-opacity duration-200',
+                    refreshing && 'opacity-60'
+                  )}
+                  aria-busy={refreshing}
+                >
+                  <table className="w-full min-w-[46rem] text-sm">
+                    <thead>
+                      <tr className="border-b border-line bg-inset text-left">
+                        <Th>Name</Th>
+                        <Th>Role</Th>
+                        <Th className="hidden md:table-cell">Faculty</Th>
+                        <Th className="hidden lg:table-cell">Batch / Reg</Th>
+                        <Th>CV</Th>
+                        <Th className="hidden xl:table-cell">Joined</Th>
+                        <Th className="text-right">
+                          <span className="sr-only">Actions</span>
+                        </Th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-line">
+                      {rows.map((u) => (
+                        <tr key={u.id} className="group transition-colors hover:bg-inset/70">
+                          <Td>
+                            <div className="font-medium text-ink">{u.fullName || '—'}</div>
+                            <div className="mt-0.5 truncate text-xs text-ink-muted">{u.email}</div>
+                          </Td>
+                          <Td>
+                            {u.isRootAdmin ? (
+                              <Badge tone="ochre">Root</Badge>
+                            ) : u.isAdmin ? (
+                              <Badge tone="accent">Staff</Badge>
+                            ) : (
+                              <Badge tone="neutral">Student</Badge>
+                            )}
+                          </Td>
+                          <Td className="hidden md:table-cell">
+                            {u.facultyName ? (
+                              <>
+                                <div className="text-xs text-ink-soft">{u.facultyName}</div>
+                                {u.departmentName && u.departmentName !== u.facultyName && (
+                                  <div className="mt-0.5 text-xs text-ink-muted">
+                                    {u.departmentName}
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-xs text-ink-muted">—</span>
+                            )}
+                          </Td>
+                          <Td className="hidden lg:table-cell">
+                            {u.batch || u.regNo ? (
+                              <>
+                                {u.batch && <div className="ident text-xs text-ink-soft">{u.batch}</div>}
+                                {u.regNo && (
+                                  <div className="ident mt-0.5 text-xs text-ink-muted">{u.regNo}</div>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-xs text-ink-muted">—</span>
+                            )}
+                          </Td>
+                          <Td>
+                            {u.isAdmin ? (
+                              <span className="text-xs text-ink-muted">n/a</span>
+                            ) : u.hasCv ? (
+                              <StatusDot tone="done">
+                                {fmtRelative(u.cvUpdatedAt) || 'complete'}
+                              </StatusDot>
+                            ) : (
+                              <StatusDot tone="empty">Empty</StatusDot>
+                            )}
+                          </Td>
+                          <Td className="hidden xl:table-cell">
+                            <span className="tnum text-xs text-ink-muted">{fmtDate(u.createdAt)}</span>
+                          </Td>
+                          <Td className="text-right">
+                            {!u.isAdmin ? (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => handleDownload(u)}
+                                loading={downloadingId === u.id}
+                                disabled={showDemo || !u.hasCv}
+                                title={
+                                  showDemo
+                                    ? 'Sample row — not a real account'
+                                    : !u.hasCv
+                                    ? 'This student has not filled in a CV yet'
+                                    : 'Download this CV as a PDF'
+                                }
+                              >
+                                {downloadingId === u.id ? 'Preparing…' : 'PDF'}
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-ink-muted">—</span>
+                            )}
+                          </Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3 sm:px-5">
+                  <p className="tnum text-xs text-ink-muted">
+                    {(() => {
+                      const from = (stats.page - 1) * (stats.limit || 20) + 1;
+                      const to = Math.min(stats.total, from + rows.length - 1);
+                      return `Showing ${from}–${to} of ${stats.total.toLocaleString('en-GB')}`;
+                    })()}
+                  </p>
+                  {stats.pages > 1 && (
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={showDemo || stats.page <= 1 || refreshing}
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      >
+                        Previous
+                      </Button>
+                      <span className="tnum px-1.5 text-xs text-ink-muted">
+                        {stats.page} / {stats.pages}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={showDemo || stats.page >= stats.pages || refreshing}
+                        onClick={() => setPage((p) => p + 1)}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </Panel>
+        </>
+      )}
+
+      <ConfirmDialog
+        open={!!rejectTarget}
+        title="Reject this access request?"
+        description={
+          rejectTarget
+            ? `${rejectTarget.email} will be deleted and will need to sign up again.`
+            : undefined
+        }
+        confirmLabel="Reject request"
+        tone="danger"
+        busy={!!reqBusyId && reqBusyId === rejectTarget?.id}
+        onConfirm={confirmReject}
+        onCancel={() => setRejectTarget(null)}
+      />
+    </AppShell>
   );
 }
 
-function FilterInput({ placeholder, value, onChange }) {
-  return (
-    <input type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-      className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-500" />
-  );
-}
+/* ── table primitives ─────────────────────────────────────────── */
 
-function FilterSelect({ value, onChange, placeholder, options }) {
+function Th({ children, className }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)}
-      className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-slate-500">
-      <option value="">{placeholder}</option>
-      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </select>
-  );
-}
-
-function RoleBadge({ user: u }) {
-  if (u.isRootAdmin) return <span className="inline-block rounded bg-amber-500 px-1.5 py-0.5 text-[11px] font-semibold text-white">Root admin</span>;
-  if (u.isAdmin)     return <span className="inline-block rounded bg-slate-900 px-1.5 py-0.5 text-[11px] font-semibold text-white">Admin</span>;
-  return <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700">Student</span>;
-}
-
-function Th({ children })       { return <th className="px-4 py-3 text-left">{children}</th>; }
-function Td({ children, className = '' }) { return <td className={`px-4 py-3 text-sm text-slate-700 ${className}`}>{children}</td>; }
-function PaginationBtn({ children, onClick, disabled }) {
-  return (
-    <button type="button" onClick={onClick} disabled={disabled}
-      className="rounded border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50">
+    <th
+      scope="col"
+      className={cn(
+        'whitespace-nowrap px-4 py-2.5 text-2xs font-semibold uppercase tracking-[0.1em] text-ink-muted sm:px-5',
+        className
+      )}
+    >
       {children}
-    </button>
+    </th>
   );
 }
-function Spinner() {
+
+function Td({ children, className }) {
   return (
-    <div className="flex items-center justify-center py-12">
-      <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-slate-700" />
-    </div>
+    <td className={cn('px-4 py-3 align-top text-sm text-ink-soft sm:px-5', className)}>
+      {children}
+    </td>
   );
 }
-function TableSkeleton() {
-  return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-      <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-        <div className="h-3 w-24 animate-pulse rounded bg-slate-200" />
-      </div>
-      <div className="divide-y divide-slate-100">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <div key={i} className="flex items-center gap-4 px-4 py-3.5">
-            <div className="h-3 w-40 animate-pulse rounded bg-slate-200" />
-            <div className="h-3 w-16 animate-pulse rounded bg-slate-100" />
-            <div className="h-3 w-28 animate-pulse rounded bg-slate-100" />
-            <div className="ml-auto h-3 w-20 animate-pulse rounded bg-slate-100" />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-function Empty({ text }) { return <p className="py-8 text-center text-sm text-slate-400">{text}</p>; }

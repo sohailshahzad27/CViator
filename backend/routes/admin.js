@@ -34,6 +34,36 @@ const router = express.Router();
 
 const PAGE_LIMIT = 20;
 
+// Whether a cv_data row holds anything worth exporting. Mirrors the
+// frontend's isEffectivelyEmpty() and the skip rule in /download-all, so
+// "has CV" means the same thing everywhere.
+//
+// Empty array entries don't count: clicking "Add role" in the builder
+// creates a blank row, which must not read as a completed CV. Requires the
+// `c` alias from `LEFT JOIN cv_data c`.
+//
+// This inspects JSONB per row, so it detoasts `data`. Fine at this scale
+// (admin-only, a few thousand students); if it ever shows up in timings,
+// promote it to a generated boolean column on cv_data and index that.
+const HAS_CV_SQL = `COALESCE(
+     COALESCE(TRIM(c.data->>'name'), '')    <> ''
+  OR COALESCE(TRIM(c.data->>'summary'), '') <> ''
+  OR (jsonb_typeof(c.data->'education') = 'array' AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements(c.data->'education') AS e
+         WHERE COALESCE(TRIM(e.value->>'school'), '') <> ''
+            OR COALESCE(TRIM(e.value->>'degree'), '') <> ''))
+  OR (jsonb_typeof(c.data->'experience') = 'array' AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements(c.data->'experience') AS e
+         WHERE COALESCE(TRIM(e.value->>'company'), '') <> ''
+            OR COALESCE(TRIM(e.value->>'role'), '') <> ''))
+  OR (jsonb_typeof(c.data->'projects') = 'array' AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements(c.data->'projects') AS e
+         WHERE COALESCE(TRIM(e.value->>'title'), '') <> ''))
+  OR (jsonb_typeof(c.data->'skills') = 'array' AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements(c.data->'skills') AS e
+         WHERE COALESCE(TRIM(e.value->>'name'), '') <> ''))
+, FALSE)`;
+
 // Token has 256 bits of entropy so brute-forcing it is infeasible either
 // way, but this still caps guessing/scanning traffic on a public, no-auth route.
 const approveLimiter = rateLimit({
@@ -63,6 +93,9 @@ function publicUser(u) {
     batch:          u.batch       || null,
     createdAt:      u.created_at,
     lastLoginAt:    u.last_login_at || null,
+    // Present on the list endpoint (see HAS_CV_SQL); absent elsewhere.
+    hasCv:          u.has_cv === undefined ? undefined : !!u.has_cv,
+    cvUpdatedAt:    u.cv_updated_at || null,
   };
 }
 
@@ -157,16 +190,28 @@ router.get('/users', async (req, res) => {
                 u.role, u.status, u.is_admin, u.is_root_admin,
                 u.reg_no, u.faculty_id, u.department_id, u.batch,
                 u.created_at, u.last_login_at,
-                f.name AS faculty_name, d.name AS department_name
+                f.name AS faculty_name, d.name AS department_name,
+                c.updated_at AS cv_updated_at,
+                ${HAS_CV_SQL} AS has_cv
            FROM users u
            LEFT JOIN faculties   f ON f.id = u.faculty_id
            LEFT JOIN departments d ON d.id = u.department_id
+           LEFT JOIN cv_data     c ON c.user_id = u.id
            ${whereSql}
           ORDER BY u.created_at DESC
           LIMIT $${p.length + 1} OFFSET $${p.length + 2}`,
         [...p, PAGE_LIMIT, offset]
       ),
-      query(`SELECT COUNT(*) AS total FROM users u ${whereSql}`, p),
+      // withCv counts every match, not just this page, so the dashboard can
+      // report real completion across the current filter.
+      query(
+        `SELECT COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE ${HAS_CV_SQL}) AS with_cv
+           FROM users u
+           LEFT JOIN cv_data c ON c.user_id = u.id
+           ${whereSql}`,
+        p
+      ),
     ]);
 
     const total = Number(countResult.rows[0].total);
@@ -175,6 +220,7 @@ router.get('/users', async (req, res) => {
       pagination: {
         page, limit: PAGE_LIMIT, total,
         pages: Math.max(1, Math.ceil(total / PAGE_LIMIT)),
+        withCv: Number(countResult.rows[0].with_cv || 0),
       },
     });
   } catch (err) {

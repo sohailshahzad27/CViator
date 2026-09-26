@@ -23,15 +23,29 @@ function markerText(index, style) {
   return style === 'dot' ? '•' : `${index + 1}.`;
 }
 
+// Exact A4 so the preview matches the generated PDF page-for-page.
+const PAGE_STYLE = {
+  width: '210mm',
+  height: '297mm',
+  maxHeight: '297mm',
+  overflow: 'hidden',
+  boxSizing: 'border-box',
+};
+
 function TemplateModern({ resume }) {
   const r          = resume || {};
   const skills     = normalizeSkills(r.skills);
   const experience = sortByDateDesc(r.experience || []);
   const education  = sortByDateDesc(r.education  || []);
+  const projects   = (r.projects || []).filter((p) => p?.title || p?.description);
   const marker     = r.markerStyle || 'number';
 
   return (
-    <article className="grid min-h-[1050px] grid-cols-[30%_minmax(0,70%)] bg-white text-[12px] leading-[1.62] text-slate-900">
+    <article
+      data-cv-page
+      style={PAGE_STYLE}
+      className="grid grid-cols-[30%_minmax(0,70%)] bg-white text-[12px] leading-[1.62] text-slate-900"
+    >
 
       {/* ── Sidebar ─────────────────────────────────────────── */}
       <aside className="px-7 py-7 pr-4 text-slate-100" style={{ background: styles.sidebarBg }}>
@@ -92,34 +106,39 @@ function TemplateModern({ resume }) {
           </Section>
         )}
 
-        <Section title="Experience" accent={styles.heading}>
-          {experience.map((ex, i) => (
-            <div key={ex.id || `exp-${i}`}>
+        {experience.length > 0 && (
+          <Section title="Experience" accent={styles.heading}>
+            {experience.map((ex, i) => (
+              <div key={ex.id || `exp-${i}`}>
+                <EntryHeader
+                  left={ex.company}
+                  sub={ex.role}
+                  right={formatDateRange(ex.from, ex.to, { fallback: ex.duration || '' })}
+                  accent={styles.heading}
+                />
+                {ex.description && <MultilineText className="mt-1.5">{ex.description}</MultilineText>}
+              </div>
+            ))}
+          </Section>
+        )}
+
+        {education.length > 0 && (
+          <Section title="Education" accent={styles.heading}>
+            {education.map((ed, i) => (
               <EntryHeader
-                left={ex.company}
-                sub={ex.role}
-                right={formatDateRange(ex.from, ex.to, { fallback: ex.duration || '' })}
+                key={ed.id || `edu-${i}`}
+                left={ed.school}
+                sub={ed.degree}
+                right={formatDateRange(ed.from, ed.to, { fallback: ed.year || '' })}
                 accent={styles.heading}
               />
-              {ex.description && <MultilineText className="mt-1.5">{ex.description}</MultilineText>}
-            </div>
-          ))}
-        </Section>
+            ))}
+          </Section>
+        )}
 
-        <Section title="Education" accent={styles.heading}>
-          {education.map((ed, i) => (
-            <EntryHeader
-              key={ed.id || `edu-${i}`}
-              left={ed.school}
-              sub={ed.degree}
-              right={formatDateRange(ed.from, ed.to, { fallback: ed.year || '' })}
-              accent={styles.heading}
-            />
-          ))}
-        </Section>
-
+        {projects.length > 0 && (
         <Section title="Projects" accent={styles.heading}>
-          {(r.projects || []).map((pr, i) => (
+          {projects.map((pr, i) => (
             <div key={pr.id || `proj-${i}`} className="flex items-start gap-3">
               {markerText(i, marker) && (
                 <div className="min-w-[1.25rem] shrink-0 pt-0.5 text-xs font-semibold text-slate-500">
@@ -140,6 +159,7 @@ function TemplateModern({ resume }) {
             </div>
           ))}
         </Section>
+        )}
 
         {(r.customSections || []).map((sec, si) => {
           const items = sec?.items || [];

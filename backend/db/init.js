@@ -38,6 +38,23 @@ async function bootstrapRootAdmin() {
   const u = rows[0];
   if (u.is_root_admin && u.role === 'admin' && u.status === 'active') return;
 
+  // Only one account may hold root admin (enforced by users_one_root_admin_idx).
+  // If someone else already holds it, promoting this user would violate that
+  // index and abort startup — so report it and leave the existing root admin
+  // in place rather than silently transferring privileges on a config change.
+  const { rows: holders } = await query(
+    `SELECT email FROM users WHERE is_root_admin = TRUE AND id <> $1 LIMIT 1`,
+    [u.id]
+  );
+  if (holders[0]) {
+    console.warn(
+      `⚠️  ROOT_ADMIN_EMAIL is ${config.rootAdminEmail}, but ${holders[0].email} is already ` +
+      'the root admin. Leaving it unchanged — demote the current root admin first if you ' +
+      'intend to transfer it.'
+    );
+    return;
+  }
+
   await query(
     `UPDATE users
         SET is_root_admin = TRUE,

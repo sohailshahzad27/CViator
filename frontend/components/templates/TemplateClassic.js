@@ -19,10 +19,10 @@
 //
 // Empty content area shows a faint dash so the row stays visible.
 //
-// Empty-state CV:
-//   When EVERY field is empty we render a greyed-out reference CV
-//   so users see the layout. As soon as anything is typed, the
-//   placeholder data disappears and only real data renders.
+// This component renders exactly the resume it is handed. The decision to
+// show sample content for an empty CV (and the visual treatment that marks
+// it as a sample) belongs to LivePreview, so the document itself never has
+// demo data baked into it.
 //
 // Marker style (resume.markerStyle):
 //   'number' → 1. 2. 3. (default)
@@ -50,34 +50,6 @@ const MAX_CUSTOM_DESC = 180;
 const MAX_SKILL_DESC  = 160;
 
 const FONT = "'Times New Roman', Times, serif";
-
-// Reference CV — only used when the resume is completely empty.
-const PLACEHOLDER = {
-  name: 'YOUR NAME',
-  email: 'you@giki.edu.pk',
-  phone: '+92 300 0000000',
-  location: 'Topi, Khyber Pakhtunkhwa, Pakistan',
-  linkedin: 'linkedin.com/in/yourname',
-  github:   'github.com/yourname',
-  others:   'yourportfolio.com',
-  summary:  'Final-year Computer Science student seeking a backend or full-stack role. Interested in distributed systems, cloud infrastructure, and developer tooling.',
-  education:  [{ id: 'p-ed-1', school: 'Ghulam Ishaq Khan Institute', degree: 'BS Computer Science', from: '2021', to: '2025', description: 'CGPA: 3.50/4.00' }],
-  experience: [{ id: 'p-ex-1', company: 'Acme Software', role: 'Software Engineering Intern', from: '2024-06', to: '2024-08', description: 'Optimized REST APIs in Node.js, cutting p95 latency by 35%. Owned the migration from a monolith to a service-oriented backend.' }],
-  projects: [
-    { id: 'p-pj-1', title: 'Distributed Key-Value Store', description: '- Built in Go with Raft consensus.\n- Linearizable reads/writes across 5 nodes.\n- Survives leader failure in <2s.' },
-    { id: 'p-pj-2', title: 'Course Registration Portal', description: 'React + Express + PostgreSQL. Real-time seat counts via WebSockets.' },
-    { id: 'p-pj-3', title: 'Tic-Tac-Toe AI', description: 'Minimax with alpha-beta pruning; perfect-play heuristic.' },
-  ],
-  skills: [
-    { name: 'Languages',  description: 'C/C++, Python, JavaScript, Go' },
-    { name: 'Frontend',   description: 'React, Next.js, Tailwind CSS' },
-    { name: 'Backend',    description: 'Node.js, Express, PostgreSQL' },
-    { name: 'Tools',      description: 'Git, Docker, Linux, AWS' },
-    { name: 'Databases',  description: 'PostgreSQL, MongoDB, Redis' },
-    { name: 'Frameworks', description: 'FastAPI, Flask, Django' },
-  ],
-  customSections: [],
-};
 
 // ── Page (strict A4) ─────────────────────────────────────────────
 const pageStyle = {
@@ -140,22 +112,6 @@ function toLines(text) {
     .filter(Boolean);
 }
 
-function isEffectivelyEmpty(r) {
-  if (!r) return true;
-  const has = (s) => s && String(s).trim().length > 0;
-  if (has(r.name) || has(r.email) || has(r.phone) || has(r.location)
-      || has(r.linkedin) || has(r.github) || has(r.others) || has(r.summary) || has(r.photo)) return false;
-  if ((r.education  || []).some((e) => has(e?.school) || has(e?.degree))) return false;
-  if ((r.experience || []).some((e) => has(e?.company) || has(e?.role))) return false;
-  if ((r.projects   || []).some((p) => has(p?.title))) return false;
-  if ((r.skills     || []).some((s) => has(typeof s === 'string' ? s : s?.name))) return false;
-  if ((r.customSections || []).some((sec) =>
-    has(sec?.title) || has(sec?.content) ||
-    (sec?.items || []).some((i) => has(i?.name) || has(i?.description))
-  )) return false;
-  return true;
-}
-
 // ── Inline SVG icons ─────────────────────────────────────────────
 const Icon = ({ children }) => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -201,11 +157,8 @@ function ContactLine({ icon, children }) {
 }
 
 function TemplateClassic({ resume }) {
-  const isEmpty = isEffectivelyEmpty(resume);
-  const r       = isEmpty ? PLACEHOLDER : (resume || {});
-  const placeholderTint = isEmpty ? { color: '#666', opacity: 0.85 } : null;
-
-  const markerStyle = (resume && resume.markerStyle) || 'number';
+  const r = resume || {};
+  const markerStyle = r.markerStyle || 'number';
 
   const skills     = normalizeSkills(r.skills).slice(0, MAX_SKILLS);
   const projects   = sortByDateDesc(r.projects   || []).slice(0, MAX_PROJECTS);
@@ -220,24 +173,16 @@ function TemplateClassic({ resume }) {
     .slice(0, 4);
 
   return (
-    <article style={{ ...pageStyle, ...placeholderTint, position: 'relative' }}>
-      {isEmpty && (
-        <div style={{
-          position: 'absolute', top: '8px', right: '12px',
-          fontSize: '9px', color: '#888', fontStyle: 'italic',
-          letterSpacing: '0.05em',
-        }}>
-          REFERENCE LAYOUT — start filling the form to see your CV
-        </div>
-      )}
-
+    // data-cv-page lets LivePreview measure content height against the
+    // fixed A4 box and warn before the PDF silently clips something.
+    <article data-cv-page style={{ ...pageStyle, position: 'relative' }}>
       {/* ── Header band ─────────────────────────────────────── */}
       <header style={{
         display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
         gap: '20px', paddingBottom: '10px', borderBottom: '1px solid #000',
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: '24px', fontWeight: 700, lineHeight: 1.1, color: isEmpty ? '#666' : '#000' }}>
+          <div style={{ fontSize: '24px', fontWeight: 700, lineHeight: 1.1, color: '#000' }}>
             {r.name || 'Your Name'}
           </div>
           <div style={{ marginTop: '7px', fontSize: '11px', lineHeight: 1.5 }}>
