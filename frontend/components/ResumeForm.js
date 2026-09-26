@@ -1,49 +1,60 @@
 // frontend/components/ResumeForm.js
-// Resume form — flat white cards, one heading per section.
+// The CV editor.
 //
-// Education & Experience:  calendar date pickers, sorted descending by date,
-//   stable IDs so reorder keeps React reconciliation correct.
-// Projects, Skills:        stable IDs for consistent keys.
-// Custom sections:         section title + unlimited named items with optional description.
-// Formatting bar:          global marker-style selector (Numbers / Dots / None).
+// Structure mirrors the printed document's section order, and each section
+// carries an `id` (section-<key>) so the builder's section rail can jump to
+// it. Repeating rows are memoised and keyed by stable id, so typing in one
+// entry doesn't re-render the others.
+//
+// Input caps match the render-side trim() values in TemplateClassic.js and
+// backend/utils/generateHTML.js — what you type is what prints.
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
-import { uid, withId, sortByDateDesc, normalizeSkills } from '../utils/resume';
+import { uid, withId, sortByDateDesc } from '../utils/resume';
+import { cn } from '../utils/cn';
+import {
+  Button,
+  FieldLabel,
+  Modal,
+  Segmented,
+  SelectField,
+  TextArea,
+  TextField,
+} from './ui';
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png'];
-const CROP_SIZE = 240; // px — size of the crop preview circle
+const CROP_SIZE = 240;
+
 const MARKER_OPTIONS = [
   { value: 'number', label: '1. 2.' },
-  { value: 'dot',    label: '• Dot' },
-  { value: 'none',   label: 'None'  },
+  { value: 'dot', label: '• Dots' },
+  { value: 'none', label: 'None' },
 ];
 
-// Hard input caps. These match the render-side trim() values in
-// TemplateClassic.js / generateHTML.js so what you type is what you see.
 const LIMITS = {
-  name:        80,
-  email:       120,
-  phone:       30,
-  location:    160,
-  socialLink:  120,
-  summary:     420,
-  company:     80,
-  role:        80,
-  school:      120,
-  degree:      120,
-  projectTitle:80,
+  name: 80,
+  email: 120,
+  phone: 30,
+  location: 160,
+  socialLink: 120,
+  summary: 420,
+  company: 80,
+  role: 80,
+  school: 120,
+  degree: 120,
+  projectTitle: 80,
   projectLink: 160,
-  description: 280,    // experience / project descriptions
-  skillName:   60,
-  skillDesc:   160,
+  description: 280,
+  skillName: 60,
+  skillDesc: 160,
   customTitle: 60,
-  customName:  80,
-  customDesc:  180,
+  customName: 80,
+  customDesc: 180,
 };
 
-// Ensure every skill has an id (normalizeSkills from utils strips them).
+// normalizeSkills() in utils strips ids, so re-attach them here for keys.
 function ensureSkillIds(skills = []) {
   return (skills || []).map((s) =>
     typeof s === 'string'
@@ -54,105 +65,130 @@ function ensureSkillIds(skills = []) {
 
 function ResumeForm({ resume, setResume }) {
   const [uploadError, setUploadError] = useState('');
-  const [cropSrc,     setCropSrc]     = useState(null);
+  const [cropSrc, setCropSrc] = useState(null);
 
-  // ── Generic field helpers ────────────────────────────────────
-  const updateField = useCallback((key, value) => {
-    setResume((prev) => ({ ...prev, [key]: value }));
-  }, [setResume]);
+  // ── Generic updaters (stable, so memoised rows stay memoised) ──
+  const updateField = useCallback(
+    (key, value) => setResume((prev) => ({ ...prev, [key]: value })),
+    [setResume]
+  );
 
-  const updateArrayItemById = useCallback((key, id, field, value) => {
-    setResume((prev) => ({
-      ...prev,
-      [key]: (prev[key] || []).map((item) =>
-        item.id === id ? { ...item, [field]: value } : item
-      ),
-    }));
-  }, [setResume]);
+  const updateItem = useCallback(
+    (key, id, field, value) =>
+      setResume((prev) => ({
+        ...prev,
+        [key]: (prev[key] || []).map((item) =>
+          item.id === id ? { ...item, [field]: value } : item
+        ),
+      })),
+    [setResume]
+  );
 
-  const addArrayItem = useCallback((key, blank) => {
-    setResume((prev) => ({
-      ...prev,
-      [key]: [...(prev[key] || []), withId(blank)],
-    }));
-  }, [setResume]);
+  const addItem = useCallback(
+    (key, blank) =>
+      setResume((prev) => ({ ...prev, [key]: [...(prev[key] || []), withId(blank)] })),
+    [setResume]
+  );
 
-  const removeArrayItemById = useCallback((key, id) => {
-    setResume((prev) => ({
-      ...prev,
-      [key]: (prev[key] || []).filter((item) => item.id !== id),
-    }));
-  }, [setResume]);
+  const removeItem = useCallback(
+    (key, id) =>
+      setResume((prev) => ({
+        ...prev,
+        [key]: (prev[key] || []).filter((item) => item.id !== id),
+      })),
+    [setResume]
+  );
 
-  // ── Skills (use ensureSkillIds so operations are ID-safe) ────
-  const addSkill = useCallback(() => {
-    setResume((prev) => ({
-      ...prev,
-      skills: [...ensureSkillIds(prev.skills), { id: uid(), name: '', description: '' }],
-    }));
-  }, [setResume]);
+  // Per-collection bindings — stable identities for memoised children.
+  const updateExperience = useCallback((id, f, v) => updateItem('experience', id, f, v), [updateItem]);
+  const removeExperience = useCallback((id) => removeItem('experience', id), [removeItem]);
+  const updateEducation = useCallback((id, f, v) => updateItem('education', id, f, v), [updateItem]);
+  const removeEducation = useCallback((id) => removeItem('education', id), [removeItem]);
+  const updateProject = useCallback((id, f, v) => updateItem('projects', id, f, v), [updateItem]);
+  const removeProject = useCallback((id) => removeItem('projects', id), [removeItem]);
 
-  const updateSkill = useCallback((id, field, value) => {
-    setResume((prev) => ({
-      ...prev,
-      skills: ensureSkillIds(prev.skills).map((s) =>
-        s.id === id ? { ...s, [field]: value } : s
-      ),
-    }));
-  }, [setResume]);
+  // ── Skills ─────────────────────────────────────────────────────
+  const addSkill = useCallback(
+    () =>
+      setResume((prev) => ({
+        ...prev,
+        skills: [...ensureSkillIds(prev.skills), { id: uid(), name: '', description: '' }],
+      })),
+    [setResume]
+  );
+  const updateSkill = useCallback(
+    (id, field, value) =>
+      setResume((prev) => ({
+        ...prev,
+        skills: ensureSkillIds(prev.skills).map((s) =>
+          s.id === id ? { ...s, [field]: value } : s
+        ),
+      })),
+    [setResume]
+  );
+  const removeSkill = useCallback(
+    (id) =>
+      setResume((prev) => ({
+        ...prev,
+        skills: ensureSkillIds(prev.skills).filter((s) => s.id !== id),
+      })),
+    [setResume]
+  );
 
-  const removeSkill = useCallback((id) => {
-    setResume((prev) => ({
-      ...prev,
-      skills: ensureSkillIds(prev.skills).filter((s) => s.id !== id),
-    }));
-  }, [setResume]);
+  // ── Custom sections ────────────────────────────────────────────
+  const addCustomItem = useCallback(
+    (sectionId) =>
+      setResume((prev) => ({
+        ...prev,
+        customSections: (prev.customSections || []).map((sec) =>
+          sec.id === sectionId
+            ? { ...sec, items: [...(sec.items || []), { id: uid(), name: '', description: '' }] }
+            : sec
+        ),
+      })),
+    [setResume]
+  );
+  const updateCustomItem = useCallback(
+    (sectionId, itemId, field, value) =>
+      setResume((prev) => ({
+        ...prev,
+        customSections: (prev.customSections || []).map((sec) =>
+          sec.id === sectionId
+            ? {
+                ...sec,
+                items: (sec.items || []).map((item) =>
+                  item.id === itemId ? { ...item, [field]: value } : item
+                ),
+              }
+            : sec
+        ),
+      })),
+    [setResume]
+  );
+  const removeCustomItem = useCallback(
+    (sectionId, itemId) =>
+      setResume((prev) => ({
+        ...prev,
+        customSections: (prev.customSections || []).map((sec) =>
+          sec.id === sectionId
+            ? { ...sec, items: (sec.items || []).filter((i) => i.id !== itemId) }
+            : sec
+        ),
+      })),
+    [setResume]
+  );
+  const updateCustomSection = useCallback(
+    (id, f, v) => updateItem('customSections', id, f, v),
+    [updateItem]
+  );
+  const removeCustomSection = useCallback((id) => removeItem('customSections', id), [removeItem]);
 
-  // ── Custom section items ─────────────────────────────────────
-  const addCustomSectionItem = useCallback((sectionId) => {
-    setResume((prev) => ({
-      ...prev,
-      customSections: (prev.customSections || []).map((sec) =>
-        sec.id === sectionId
-          ? { ...sec, items: [...(sec.items || []), { id: uid(), name: '', description: '' }] }
-          : sec
-      ),
-    }));
-  }, [setResume]);
-
-  const updateCustomSectionItem = useCallback((sectionId, itemId, field, value) => {
-    setResume((prev) => ({
-      ...prev,
-      customSections: (prev.customSections || []).map((sec) =>
-        sec.id === sectionId
-          ? {
-              ...sec,
-              items: (sec.items || []).map((item) =>
-                item.id === itemId ? { ...item, [field]: value } : item
-              ),
-            }
-          : sec
-      ),
-    }));
-  }, [setResume]);
-
-  const removeCustomSectionItem = useCallback((sectionId, itemId) => {
-    setResume((prev) => ({
-      ...prev,
-      customSections: (prev.customSections || []).map((sec) =>
-        sec.id === sectionId
-          ? { ...sec, items: (sec.items || []).filter((item) => item.id !== itemId) }
-          : sec
-      ),
-    }));
-  }, [setResume]);
-
-  // ── Photo upload — opens crop modal before saving ────────────
+  // ── Photo ──────────────────────────────────────────────────────
   const handlePhotoChange = useCallback((event) => {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      setUploadError('Please upload a JPG or PNG image.');
+      setUploadError('Please choose a JPG or PNG image.');
       event.target.value = '';
       return;
     }
@@ -162,228 +198,296 @@ function ResumeForm({ resume, setResume }) {
       return;
     }
     const reader = new FileReader();
-    reader.onload  = () => { setCropSrc(reader.result); setUploadError(''); };
+    reader.onload = () => {
+      setCropSrc(reader.result);
+      setUploadError('');
+    };
     reader.onerror = () => setUploadError('Could not read that file. Try another image.');
     reader.readAsDataURL(file);
     event.target.value = '';
   }, []);
 
-  // ── Memoised derived data ─────────────────────────────────────
-  const sortedExperience = useMemo(() => sortByDateDesc(resume.experience || []), [resume.experience]);
-  const sortedEducation  = useMemo(() => sortByDateDesc(resume.education  || []), [resume.education]);
-  const skillsWithIds    = useMemo(() => ensureSkillIds(resume.skills),           [resume.skills]);
-  const markerStyle      = resume.markerStyle || 'number';
+  // ── Derived ────────────────────────────────────────────────────
+  const sortedExperience = useMemo(
+    () => sortByDateDesc(resume.experience || []),
+    [resume.experience]
+  );
+  const sortedEducation = useMemo(
+    () => sortByDateDesc(resume.education || []),
+    [resume.education]
+  );
+  const skillsWithIds = useMemo(() => ensureSkillIds(resume.skills), [resume.skills]);
+  const markerStyle = resume.markerStyle || 'number';
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {cropSrc && (
         <CropModal
           imageSrc={cropSrc}
-          onApply={(dataUrl) => { updateField('photo', dataUrl); setCropSrc(null); }}
+          onApply={(dataUrl) => {
+            updateField('photo', dataUrl);
+            setCropSrc(null);
+          }}
           onCancel={() => setCropSrc(null)}
         />
       )}
 
-      {/* ── Formatting ──────────────────────────────────────── */}
-      <section className="rounded-lg border border-slate-200 bg-white px-5 py-4 sm:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span className="text-sm font-semibold uppercase tracking-wider text-slate-700">
-            Formatting
-          </span>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500">List markers</span>
-            <div className="inline-flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
-              {MARKER_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => updateField('markerStyle', opt.value)}
-                  className={`rounded px-3 py-1.5 text-xs font-medium transition ${
-                    markerStyle === opt.value
-                      ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* ── Document-wide formatting ──────────────────────────── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-inset px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-ink">List markers</p>
+          <p className="mt-0.5 text-2xs text-ink-muted">
+            Applies to skills, projects and custom sections.
+          </p>
         </div>
-      </section>
+        <Segmented
+          size="sm"
+          value={markerStyle}
+          onChange={(v) => updateField('markerStyle', v)}
+          options={MARKER_OPTIONS}
+          ariaLabel="List marker style"
+        />
+      </div>
 
-      {/* ── Personal information ─────────────────────────────── */}
-      <Section title="Personal information">
-        <div className="flex flex-col gap-6 sm:flex-row">
-          <div className="flex flex-shrink-0 items-start gap-4 sm:flex-col sm:items-center sm:gap-3">
-            <div className="relative h-20 w-20 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
-              {resume.photo ? (
-                <img src={resume.photo} alt="Profile preview" className="h-full w-full object-cover" />
-              ) : (
-                <PhotoPlaceholder />
-              )}
+      {/* ── Personal ──────────────────────────────────────────── */}
+      <Section id="personal" title="Personal details" step={1}>
+        <div className="flex flex-col gap-5 sm:flex-row">
+          <PhotoPicker
+            photo={resume.photo}
+            error={uploadError}
+            onPick={handlePhotoChange}
+            onCrop={() => setCropSrc(resume.photo)}
+            onRemove={() => updateField('photo', '')}
+          />
+          <div className="min-w-0 flex-1 space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <TextField
+                label="Full name"
+                value={resume.name}
+                placeholder="Ayesha Tariq"
+                onChange={(v) => updateField('name', v)}
+                maxLength={LIMITS.name}
+                showCounter
+              />
+              <TextField
+                label="Email"
+                type="email"
+                value={resume.email}
+                placeholder="u2021458@giki.edu.pk"
+                onChange={(v) => updateField('email', v)}
+                maxLength={LIMITS.email}
+              />
+              <TextField
+                label="Phone"
+                value={resume.phone}
+                placeholder="+92 336 214 8890"
+                onChange={(v) => updateField('phone', v)}
+                maxLength={LIMITS.phone}
+              />
+              <TextField
+                label="Location"
+                value={resume.location}
+                placeholder="Topi, Khyber Pakhtunkhwa"
+                onChange={(v) => updateField('location', v)}
+                maxLength={LIMITS.location}
+              />
             </div>
-            <div className="flex flex-col items-start gap-1 sm:items-center">
-              <label className="inline-flex cursor-pointer items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:text-slate-900">
-                {resume.photo ? 'Change' : 'Upload'}
-                <input type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" className="hidden" onChange={handlePhotoChange} />
-              </label>
-              {resume.photo && (
-                <button
-                  type="button"
-                  onClick={() => setCropSrc(resume.photo)}
-                  className="text-[11px] font-medium text-slate-600 hover:text-slate-900"
-                >
-                  Crop
-                </button>
-              )}
-              {resume.photo && (
-                <button type="button" onClick={() => updateField('photo', '')} className="text-[11px] text-slate-400 hover:text-red-600">
-                  Remove
-                </button>
-              )}
-              <p className="text-[11px] text-slate-400">JPG or PNG, &lt;=2 MB</p>
-              {uploadError && <p className="max-w-[10rem] text-[11px] text-red-600">{uploadError}</p>}
-            </div>
-          </div>
-
-          <div className="flex-1">
-            <Grid>
-              <Input label="Full name"  value={resume.name}     placeholder="Enter your full name"     onChange={(v) => updateField('name', v)}     maxLength={LIMITS.name} />
-              <Input label="Email"      value={resume.email}    placeholder="Enter your email address" onChange={(v) => updateField('email', v)}    maxLength={LIMITS.email} />
-              <Input label="Phone"      value={resume.phone}    placeholder="Enter your phone number"  onChange={(v) => updateField('phone', v)}    maxLength={LIMITS.phone} />
-              <Input label="Location"   value={resume.location} placeholder="Enter your location"      onChange={(v) => updateField('location', v)} maxLength={LIMITS.location} />
-            </Grid>
           </div>
         </div>
       </Section>
 
-      {/* ── Social links ─────────────────────────────────────── */}
-      <Section title="Social links">
-        <Grid>
-          <Input label="LinkedIn URL" value={resume.linkedin} placeholder="linkedin.com/in/your-name" onChange={(v) => updateField('linkedin', v)} maxLength={LIMITS.socialLink} />
-          <Input label="GitHub URL"   value={resume.github}   placeholder="github.com/your-name"       onChange={(v) => updateField('github', v)}   maxLength={LIMITS.socialLink} />
-          <Input label="Others (URL)" value={resume.others}   placeholder="portfolio.example.com"      onChange={(v) => updateField('others', v)}   maxLength={LIMITS.socialLink} />
-        </Grid>
+      {/* ── Links ─────────────────────────────────────────────── */}
+      <Section id="links" title="Social links" step={2} hint="Shown under your contact details.">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <TextField
+            label="LinkedIn"
+            value={resume.linkedin}
+            placeholder="linkedin.com/in/your-name"
+            onChange={(v) => updateField('linkedin', v)}
+            maxLength={LIMITS.socialLink}
+          />
+          <TextField
+            label="GitHub"
+            value={resume.github}
+            placeholder="github.com/your-name"
+            onChange={(v) => updateField('github', v)}
+            maxLength={LIMITS.socialLink}
+          />
+          <TextField
+            label="Portfolio or other"
+            value={resume.others}
+            placeholder="your-site.com"
+            onChange={(v) => updateField('others', v)}
+            maxLength={LIMITS.socialLink}
+            className="sm:col-span-2"
+          />
+        </div>
       </Section>
 
-      {/* ── Summary ──────────────────────────────────────────── */}
-      <Section title="Professional summary">
-        <Textarea value={resume.summary} onChange={(v) => updateField('summary', v)} rows={4} placeholder="Write a short professional summary..." maxLength={LIMITS.summary} />
-      </Section>
-
-      {/* ── Experience ───────────────────────────────────────── */}
+      {/* ── Objective ─────────────────────────────────────────── */}
       <Section
+        id="summary"
+        title="Objective"
+        step={3}
+        hint="Two or three lines on the role you're after."
+      >
+        <TextArea
+          value={resume.summary}
+          onChange={(v) => updateField('summary', v)}
+          rows={4}
+          placeholder="Final-year Computer Science student looking for a graduate software engineering role…"
+          maxLength={LIMITS.summary}
+        />
+      </Section>
+
+      {/* ── Experience ────────────────────────────────────────── */}
+      <Section
+        id="experience"
         title="Experience"
-        onAdd={() => addArrayItem('experience', { company: '', role: '', from: null, to: null, description: '' })}
+        step={4}
+        count={sortedExperience.length}
+        hint="Newest first — ordering is automatic."
+        onAdd={() =>
+          addItem('experience', { company: '', role: '', from: null, to: null, description: '' })
+        }
+        addLabel="Add role"
       >
-        {sortedExperience.map((ex) => (
-          <RepeatItem key={ex.id} onRemove={() => removeArrayItemById('experience', ex.id)}>
-            <Grid>
-              <Input label="Company" value={ex.company} placeholder="Enter company name" onChange={(v) => updateArrayItemById('experience', ex.id, 'company', v)} maxLength={LIMITS.company} />
-              <Input label="Role"    value={ex.role}    placeholder="Enter your role"    onChange={(v) => updateArrayItemById('experience', ex.id, 'role', v)}    maxLength={LIMITS.role} />
-            </Grid>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <DatePickerInput label="From" value={ex.from} onChange={(v) => updateArrayItemById('experience', ex.id, 'from', v)} placeholder="Select start date" />
-              <DatePickerInput label="To"   value={ex.to}   onChange={(v) => updateArrayItemById('experience', ex.id, 'to', v)}   placeholder="Present if blank" isClearable />
-            </div>
-            <Textarea label="Description" value={ex.description} placeholder="Describe your experience..." onChange={(v) => updateArrayItemById('experience', ex.id, 'description', v)} rows={4} maxLength={LIMITS.description} />
-          </RepeatItem>
-        ))}
-      </Section>
-
-      {/* ── Education ────────────────────────────────────────── */}
-      <Section
-        title="Education"
-        onAdd={() => addArrayItem('education', { school: '', degree: '', from: null, to: null })}
-      >
-        {sortedEducation.map((ed) => (
-          <RepeatItem key={ed.id} onRemove={() => removeArrayItemById('education', ed.id)}>
-            <Grid>
-              <Input label="School" value={ed.school} placeholder="Enter school name"       onChange={(v) => updateArrayItemById('education', ed.id, 'school', v)} maxLength={LIMITS.school} />
-              <Input label="Degree" value={ed.degree} placeholder="Enter degree or program" onChange={(v) => updateArrayItemById('education', ed.id, 'degree', v)} maxLength={LIMITS.degree} />
-            </Grid>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <DatePickerInput label="From" value={ed.from} onChange={(v) => updateArrayItemById('education', ed.id, 'from', v)} placeholder="Select start date" />
-              <DatePickerInput label="To"   value={ed.to}   onChange={(v) => updateArrayItemById('education', ed.id, 'to', v)}   placeholder="Present if blank" isClearable />
-            </div>
-          </RepeatItem>
-        ))}
-      </Section>
-
-      {/* ── Projects ─────────────────────────────────────────── */}
-      <Section
-        title="Projects"
-        onAdd={() => addArrayItem('projects', { title: '', description: '', link: '' })}
-      >
-        {(resume.projects || []).map((pr) => (
-          <RepeatItem key={pr.id} onRemove={() => removeArrayItemById('projects', pr.id)}>
-            <Grid>
-              <Input label="Title" value={pr.title} placeholder="Enter project title" onChange={(v) => updateArrayItemById('projects', pr.id, 'title', v)} maxLength={LIMITS.projectTitle} />
-              <Input label="Link"  value={pr.link}  placeholder="Enter project link"  onChange={(v) => updateArrayItemById('projects', pr.id, 'link', v)}  maxLength={LIMITS.projectLink} />
-            </Grid>
-            <Textarea label="Description" value={pr.description} placeholder="Describe your project..." onChange={(v) => updateArrayItemById('projects', pr.id, 'description', v)} rows={4} maxLength={LIMITS.description} />
-          </RepeatItem>
-        ))}
-      </Section>
-
-      {/* ── Skills ───────────────────────────────────────────── */}
-      <Section title="Skills" onAdd={addSkill}>
-        {skillsWithIds.map((skill) => (
-          <RepeatItem key={skill.id} onRemove={() => removeSkill(skill.id)}>
-            <Input label="Skill / Category" value={skill.name} placeholder="E.g. Languages, React, Python…" onChange={(v) => updateSkill(skill.id, 'name', v)} maxLength={LIMITS.skillName} />
-            <Textarea label="Description (optional)" value={skill.description} placeholder="Add a short description if you want..." onChange={(v) => updateSkill(skill.id, 'description', v)} rows={3} maxLength={LIMITS.skillDesc} />
-          </RepeatItem>
-        ))}
-      </Section>
-
-      {/* ── Custom sections ──────────────────────────────────── */}
-      <Section
-        title="Custom sections"
-        onAdd={() => addArrayItem('customSections', { title: '', items: [] })}
-      >
-        {(resume.customSections || []).map((sec) => (
-          <RepeatItem key={sec.id} onRemove={() => removeArrayItemById('customSections', sec.id)}>
-            <Input
-              label="Section title"
-              value={sec.title}
-              placeholder="E.g. Certifications, Languages…"
-              onChange={(v) => updateArrayItemById('customSections', sec.id, 'title', v)}
-              maxLength={LIMITS.customTitle}
+        {sortedExperience.length === 0 ? (
+          <SectionEmpty
+            text="No roles yet. Internships, part-time work and research assistantships all count."
+            onAdd={() =>
+              addItem('experience', { company: '', role: '', from: null, to: null, description: '' })
+            }
+            addLabel="Add your first role"
+          />
+        ) : (
+          sortedExperience.map((ex, i) => (
+            <ExperienceRow
+              key={ex.id}
+              index={i}
+              item={ex}
+              onUpdate={updateExperience}
+              onRemove={removeExperience}
             />
-            <div className="space-y-2">
-              {(sec.items || []).map((item) => (
-                <InnerItem
-                  key={item.id}
-                  onRemove={() => removeCustomSectionItem(sec.id, item.id)}
-                >
-                  <Input
-                    label="Name"
-                    value={item.name}
-                    placeholder="Item name"
-                    onChange={(v) => updateCustomSectionItem(sec.id, item.id, 'name', v)}
-                    maxLength={LIMITS.customName}
-                  />
-                  <Textarea
-                    label="Description (optional)"
-                    value={item.description}
-                    placeholder="Add a short description if you want…"
-                    onChange={(v) => updateCustomSectionItem(sec.id, item.id, 'description', v)}
-                    rows={2}
-                    maxLength={LIMITS.customDesc}
-                  />
-                </InnerItem>
-              ))}
-              <button
-                type="button"
-                onClick={() => addCustomSectionItem(sec.id)}
-                className="mt-1 text-xs font-medium text-slate-600 hover:text-slate-900"
-              >
-                + Add item
-              </button>
-            </div>
-          </RepeatItem>
-        ))}
+          ))
+        )}
+      </Section>
+
+      {/* ── Education ─────────────────────────────────────────── */}
+      <Section
+        id="education"
+        title="Education"
+        step={5}
+        count={sortedEducation.length}
+        onAdd={() => addItem('education', { school: '', degree: '', from: null, to: null })}
+        addLabel="Add school"
+      >
+        {sortedEducation.length === 0 ? (
+          <SectionEmpty
+            text="Add your degree at GIKI, and your intermediate or A-levels."
+            onAdd={() => addItem('education', { school: '', degree: '', from: null, to: null })}
+            addLabel="Add education"
+          />
+        ) : (
+          sortedEducation.map((ed, i) => (
+            <EducationRow
+              key={ed.id}
+              index={i}
+              item={ed}
+              onUpdate={updateEducation}
+              onRemove={removeEducation}
+            />
+          ))
+        )}
+      </Section>
+
+      {/* ── Projects ──────────────────────────────────────────── */}
+      <Section
+        id="projects"
+        title="Projects"
+        step={6}
+        count={(resume.projects || []).length}
+        hint="Up to four appear on the printed page."
+        onAdd={() => addItem('projects', { title: '', description: '', link: '' })}
+        addLabel="Add project"
+      >
+        {(resume.projects || []).length === 0 ? (
+          <SectionEmpty
+            text="Course projects, side projects and competition entries are all worth listing."
+            onAdd={() => addItem('projects', { title: '', description: '', link: '' })}
+            addLabel="Add a project"
+          />
+        ) : (
+          (resume.projects || []).map((pr, i) => (
+            <ProjectRow
+              key={pr.id}
+              index={i}
+              item={pr}
+              onUpdate={updateProject}
+              onRemove={removeProject}
+            />
+          ))
+        )}
+      </Section>
+
+      {/* ── Skills ────────────────────────────────────────────── */}
+      <Section
+        id="skills"
+        title="Skills"
+        step={7}
+        count={skillsWithIds.length}
+        hint="Group them — 'Languages', 'Backend', 'Tools'. Up to eight print."
+        onAdd={addSkill}
+        addLabel="Add group"
+      >
+        {skillsWithIds.length === 0 ? (
+          <SectionEmpty
+            text="Group related skills so the page stays readable."
+            onAdd={addSkill}
+            addLabel="Add a skill group"
+          />
+        ) : (
+          skillsWithIds.map((skill, i) => (
+            <SkillRow
+              key={skill.id}
+              index={i}
+              item={skill}
+              onUpdate={updateSkill}
+              onRemove={removeSkill}
+            />
+          ))
+        )}
+      </Section>
+
+      {/* ── Custom sections ───────────────────────────────────── */}
+      <Section
+        id="custom"
+        title="Custom sections"
+        step={8}
+        count={(resume.customSections || []).length}
+        hint="Achievements, certifications, societies — anything else worth printing."
+        onAdd={() => addItem('customSections', { title: '', items: [] })}
+        addLabel="Add section"
+      >
+        {(resume.customSections || []).length === 0 ? (
+          <SectionEmpty
+            text="Optional. Add one if you have achievements or activities to show."
+            onAdd={() => addItem('customSections', { title: '', items: [] })}
+            addLabel="Add a custom section"
+          />
+        ) : (
+          (resume.customSections || []).map((sec) => (
+            <CustomSectionBlock
+              key={sec.id}
+              section={sec}
+              onUpdateSection={updateCustomSection}
+              onRemoveSection={removeCustomSection}
+              onAddItem={addCustomItem}
+              onUpdateItem={updateCustomItem}
+              onRemoveItem={removeCustomItem}
+            />
+          ))
+        )}
       </Section>
     </div>
   );
@@ -391,150 +495,396 @@ function ResumeForm({ resume, setResume }) {
 
 export default memo(ResumeForm);
 
-// ── Layout helpers ────────────────────────────────────────────────
+/* ── Layout pieces ────────────────────────────────────────────── */
 
-function Section({ title, children, onAdd }) {
+function Section({ id, title, step, hint, count, children, onAdd, addLabel }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-5 sm:p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-700">{title}</h3>
+    <section
+      id={`section-${id}`}
+      className="scroll-mt-24 rounded-lg border border-line bg-surface"
+      aria-labelledby={`heading-${id}`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            {step !== undefined && (
+              <span
+                aria-hidden
+                className="tnum grid h-5 w-5 shrink-0 place-items-center rounded border border-line bg-inset text-2xs font-semibold text-ink-muted"
+              >
+                {step}
+              </span>
+            )}
+            <h3 id={`heading-${id}`} className="text-sm font-semibold tracking-tight text-ink">
+              {title}
+            </h3>
+            {count > 0 && <span className="tnum text-2xs text-ink-muted">{count}</span>}
+          </div>
+          {hint && <p className="mt-1 pl-7 text-xs leading-relaxed text-ink-muted">{hint}</p>}
+        </div>
         {onAdd && (
-          <button type="button" onClick={onAdd} className="text-xs font-medium text-slate-600 hover:text-slate-900">
-            + Add
-          </button>
+          <Button size="sm" variant="secondary" onClick={onAdd}>
+            <svg viewBox="0 0 16 16" aria-hidden className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.75">
+              <path d="M8 3.5v9M3.5 8h9" strokeLinecap="round" />
+            </svg>
+            {addLabel || 'Add'}
+          </Button>
         )}
       </div>
-      <div className="space-y-4">{children}</div>
+      <div className="space-y-4 p-4 sm:p-5">{children}</div>
     </section>
   );
 }
 
-function Grid({ children }) {
-  return <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>;
-}
-
-const RepeatItem = memo(function RepeatItem({ children, onRemove }) {
+function SectionEmpty({ text, onAdd, addLabel }) {
   return (
-    <div className="relative rounded-md border border-slate-200 bg-slate-50 p-4">
-      <button
-        type="button"
-        onClick={onRemove}
-        className="absolute right-3 top-3 text-xs font-medium text-slate-400 hover:text-red-600"
-        aria-label="Remove"
-      >
-        Remove
-      </button>
-      <div className="space-y-4 pr-16">{children}</div>
-    </div>
-  );
-});
-
-function InnerItem({ children, onRemove }) {
-  return (
-    <div className="relative rounded border border-slate-200 bg-white p-3 pr-14">
-      <button
-        type="button"
-        onClick={onRemove}
-        className="absolute right-2 top-2 text-[11px] text-slate-400 hover:text-red-600"
-        aria-label="Remove item"
-      >
-        Remove
-      </button>
-      <div className="space-y-3">{children}</div>
+    <div className="rounded-md border border-dashed border-line-strong bg-inset px-4 py-5 text-center">
+      <p className="mx-auto max-w-xs text-xs leading-relaxed text-ink-muted">{text}</p>
+      {onAdd && (
+        <Button size="sm" variant="secondary" className="mt-3" onClick={onAdd}>
+          {addLabel || 'Add'}
+        </Button>
+      )}
     </div>
   );
 }
 
-const Input = memo(function Input({ label, value, onChange, placeholder, maxLength }) {
-  const v = value || '';
+/** A repeating entry: numbered, with a remove control in the header. */
+const RepeatCard = memo(function RepeatCard({ index, label, onRemove, children }) {
   return (
-    <label className="block">
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs font-medium text-slate-600">{label}</span>
-        {maxLength && (
-          <span
-            className={`text-[10px] tabular-nums ${
-              v.length >= maxLength ? 'text-red-500' : 'text-slate-400'
-            }`}
-          >
-            {v.length}/{maxLength}
-          </span>
-        )}
+    <div className="group rounded-md border border-line bg-inset/60 transition-colors focus-within:border-line-strong hover:border-line-strong">
+      <div className="flex items-center justify-between gap-2 border-b border-line/80 px-3 py-2">
+        <span className="text-2xs font-semibold uppercase tracking-[0.1em] text-ink-muted">
+          {label} {index + 1}
+        </span>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${label.toLowerCase()} ${index + 1}`}
+          className="rounded p-1 text-ink-muted transition-colors hover:bg-danger-soft hover:text-danger"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <path d="M3 5.5h10M6.5 5.5V4a1 1 0 011-1h1a1 1 0 011 1v1.5M5 5.5l.6 7a1 1 0 001 .9h2.8a1 1 0 001-.9l.6-7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
-      <input
-        type="text"
-        value={v}
-        placeholder={placeholder}
-        maxLength={maxLength}
-        onChange={(e) => onChange(maxLength ? e.target.value.slice(0, maxLength) : e.target.value)}
-        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-100"
-      />
-    </label>
+      <div className="space-y-4 p-3.5">{children}</div>
+    </div>
   );
 });
 
-const Textarea = memo(function Textarea({ label, value, onChange, rows = 3, placeholder, maxLength }) {
-  const v = value || '';
+/* ── Repeating rows (memoised individually) ───────────────────── */
+
+const ExperienceRow = memo(function ExperienceRow({ index, item, onUpdate, onRemove }) {
   return (
-    <label className="block">
-      <div className="mb-1 flex items-center justify-between">
-        {label ? <span className="text-xs font-medium text-slate-600">{label}</span> : <span />}
-        {maxLength && (
-          <span
-            className={`text-[10px] tabular-nums ${
-              v.length >= maxLength ? 'text-red-500' : 'text-slate-400'
-            }`}
-          >
-            {v.length}/{maxLength}
-          </span>
-        )}
+    <RepeatCard index={index} label="Role" onRemove={() => onRemove(item.id)}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <TextField
+          label="Company"
+          value={item.company}
+          placeholder="Systems Limited"
+          onChange={(v) => onUpdate(item.id, 'company', v)}
+          maxLength={LIMITS.company}
+        />
+        <TextField
+          label="Role"
+          value={item.role}
+          placeholder="Software Engineering Intern"
+          onChange={(v) => onUpdate(item.id, 'role', v)}
+          maxLength={LIMITS.role}
+        />
       </div>
-      <textarea
-        rows={rows}
-        value={v}
-        placeholder={placeholder}
-        maxLength={maxLength}
-        onChange={(e) => onChange(maxLength ? e.target.value.slice(0, maxLength) : e.target.value)}
-        className="w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-100"
+      <div className="grid gap-4 sm:grid-cols-2">
+        <DateField
+          label="From"
+          value={item.from}
+          onChange={(v) => onUpdate(item.id, 'from', v)}
+          placeholder="Start date"
+        />
+        <DateField
+          label="To"
+          value={item.to}
+          onChange={(v) => onUpdate(item.id, 'to', v)}
+          placeholder="Present if blank"
+          isClearable
+        />
+      </div>
+      <TextArea
+        label="What you did"
+        value={item.description}
+        placeholder="Start each line with an action and include a number where you can."
+        onChange={(v) => onUpdate(item.id, 'description', v)}
+        rows={4}
+        maxLength={LIMITS.description}
       />
-    </label>
+    </RepeatCard>
   );
 });
 
-const DatePickerInput = memo(function DatePickerInput({ label, value, onChange, placeholder, isClearable = false }) {
-  const selected = value instanceof Date
-    ? value
-    : (value ? new Date(value) : null);
+const EducationRow = memo(function EducationRow({ index, item, onUpdate, onRemove }) {
+  return (
+    <RepeatCard index={index} label="School" onRemove={() => onRemove(item.id)}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <TextField
+          label="Institution"
+          value={item.school}
+          placeholder="Ghulam Ishaq Khan Institute"
+          onChange={(v) => onUpdate(item.id, 'school', v)}
+          maxLength={LIMITS.school}
+        />
+        <TextField
+          label="Degree or programme"
+          value={item.degree}
+          placeholder="BS Computer Science"
+          onChange={(v) => onUpdate(item.id, 'degree', v)}
+          maxLength={LIMITS.degree}
+        />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <DateField
+          label="From"
+          value={item.from}
+          onChange={(v) => onUpdate(item.id, 'from', v)}
+          placeholder="Start date"
+        />
+        <DateField
+          label="To"
+          value={item.to}
+          onChange={(v) => onUpdate(item.id, 'to', v)}
+          placeholder="Present if blank"
+          isClearable
+        />
+      </div>
+    </RepeatCard>
+  );
+});
+
+const ProjectRow = memo(function ProjectRow({ index, item, onUpdate, onRemove }) {
+  return (
+    <RepeatCard index={index} label="Project" onRemove={() => onRemove(item.id)}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <TextField
+          label="Title"
+          value={item.title}
+          placeholder="Raft-based key-value store"
+          onChange={(v) => onUpdate(item.id, 'title', v)}
+          maxLength={LIMITS.projectTitle}
+        />
+        <TextField
+          label="Link"
+          value={item.link}
+          placeholder="github.com/you/project"
+          onChange={(v) => onUpdate(item.id, 'link', v)}
+          maxLength={LIMITS.projectLink}
+        />
+      </div>
+      <TextArea
+        label="Description"
+        value={item.description}
+        placeholder={'One line per point:\n- Built X with Y\n- Handled Z requests/second'}
+        onChange={(v) => onUpdate(item.id, 'description', v)}
+        rows={4}
+        maxLength={LIMITS.description}
+      />
+    </RepeatCard>
+  );
+});
+
+const SkillRow = memo(function SkillRow({ index, item, onUpdate, onRemove }) {
+  return (
+    <RepeatCard index={index} label="Group" onRemove={() => onRemove(item.id)}>
+      <TextField
+        label="Group name"
+        value={item.name}
+        placeholder="Languages"
+        onChange={(v) => onUpdate(item.id, 'name', v)}
+        maxLength={LIMITS.skillName}
+      />
+      <TextArea
+        label="Details"
+        value={item.description}
+        placeholder="Go, Python, TypeScript, SQL"
+        onChange={(v) => onUpdate(item.id, 'description', v)}
+        rows={2}
+        maxLength={LIMITS.skillDesc}
+      />
+    </RepeatCard>
+  );
+});
+
+const CustomSectionBlock = memo(function CustomSectionBlock({
+  section,
+  onUpdateSection,
+  onRemoveSection,
+  onAddItem,
+  onUpdateItem,
+  onRemoveItem,
+}) {
+  const items = section.items || [];
+  return (
+    <div className="rounded-md border border-line bg-inset/60">
+      <div className="flex items-center justify-between gap-2 border-b border-line/80 px-3 py-2">
+        <span className="text-2xs font-semibold uppercase tracking-[0.1em] text-ink-muted">
+          Section
+        </span>
+        <button
+          type="button"
+          onClick={() => onRemoveSection(section.id)}
+          aria-label="Remove custom section"
+          className="rounded p-1 text-ink-muted transition-colors hover:bg-danger-soft hover:text-danger"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <path d="M3 5.5h10M6.5 5.5V4a1 1 0 011-1h1a1 1 0 011 1v1.5M5 5.5l.6 7a1 1 0 001 .9h2.8a1 1 0 001-.9l.6-7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </div>
+
+      <div className="space-y-4 p-3.5">
+        <TextField
+          label="Section title"
+          value={section.title}
+          placeholder="Achievements"
+          onChange={(v) => onUpdateSection(section.id, 'title', v)}
+          maxLength={LIMITS.customTitle}
+        />
+
+        {items.length > 0 && (
+          <ul className="space-y-2.5">
+            {items.map((item) => (
+              <li key={item.id} className="rounded border border-line bg-surface p-3">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <span className="text-2xs font-medium uppercase tracking-wide text-ink-muted">
+                    Item
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveItem(section.id, item.id)}
+                    aria-label="Remove item"
+                    className="rounded p-0.5 text-ink-muted transition-colors hover:text-danger"
+                  >
+                    <svg viewBox="0 0 16 16" aria-hidden className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.75">
+                      <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  <TextField
+                    label="Name"
+                    value={item.name}
+                    placeholder="ICPC Regionals 2024"
+                    onChange={(v) => onUpdateItem(section.id, item.id, 'name', v)}
+                    maxLength={LIMITS.customName}
+                  />
+                  <TextArea
+                    label="Detail"
+                    value={item.description}
+                    placeholder="Ranked 11th of 120 teams."
+                    onChange={(v) => onUpdateItem(section.id, item.id, 'description', v)}
+                    rows={2}
+                    maxLength={LIMITS.customDesc}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <Button size="sm" variant="ghost" onClick={() => onAddItem(section.id)}>
+          <svg viewBox="0 0 16 16" aria-hidden className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.75">
+            <path d="M8 3.5v9M3.5 8h9" strokeLinecap="round" />
+          </svg>
+          Add item
+        </Button>
+      </div>
+    </div>
+  );
+});
+
+/* ── Photo ────────────────────────────────────────────────────── */
+
+function PhotoPicker({ photo, error, onPick, onCrop, onRemove }) {
+  return (
+    <div className="flex shrink-0 items-start gap-4 sm:w-[7.5rem] sm:flex-col sm:items-stretch">
+      <div className="relative h-[6.4rem] w-20 shrink-0 overflow-hidden rounded border border-line bg-inset sm:w-full">
+        {photo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={photo} alt="Your profile photo" className="h-full w-full object-cover" />
+        ) : (
+          <div className="grid h-full w-full place-items-center px-2 text-center">
+            <svg viewBox="0 0 24 24" aria-hidden className="h-7 w-7 text-line-strong" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <circle cx="12" cy="9" r="3.4" />
+              <path d="M4.5 19.5c1.5-3.4 4.5-5 7.5-5s6 1.6 7.5 5" strokeLinecap="round" />
+            </svg>
+          </div>
+        )}
+      </div>
+
+      <div className="min-w-0 space-y-1.5">
+        <label className="inline-flex h-8 cursor-pointer items-center justify-center rounded-md border border-line bg-surface px-2.5 text-xs font-medium text-ink transition-colors hover:border-line-strong hover:bg-inset">
+          {photo ? 'Replace' : 'Upload photo'}
+          <input
+            type="file"
+            accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+            className="hidden"
+            onChange={onPick}
+          />
+        </label>
+        {photo && (
+          <div className="flex items-center gap-1">
+            <Button size="sm" variant="ghost" onClick={onCrop}>
+              Crop
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onRemove} className="hover:text-danger">
+              Remove
+            </Button>
+          </div>
+        )}
+        <p className="text-2xs leading-relaxed text-ink-muted">JPG or PNG, under 2 MB.</p>
+        {error && <p className="text-2xs leading-relaxed text-danger">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ── Date input ───────────────────────────────────────────────── */
+
+function DateField({ label, value, onChange, placeholder, isClearable = false }) {
+  const selected = value instanceof Date ? value : value ? new Date(value) : null;
+  const valid = selected && !Number.isNaN(selected.getTime()) ? selected : null;
 
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-medium text-slate-600">{label}</span>
+    <div>
+      <FieldLabel>{label}</FieldLabel>
       <DatePicker
-        selected={selected && !Number.isNaN(selected.getTime()) ? selected : null}
+        selected={valid}
         onChange={(date) => onChange(date)}
         placeholderText={placeholder}
-        dateFormat="MMM d, yyyy"
-        showMonthDropdown
-        showYearDropdown
-        dropdownMode="select"
+        dateFormat="MMM yyyy"
+        showMonthYearPicker
+        showFullMonthYearPicker
         isClearable={isClearable}
         autoComplete="off"
         popperPlacement="bottom-start"
         wrapperClassName="block w-full"
-        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-100"
+        className={cn(
+          'h-9 w-full rounded-md border border-line bg-surface px-3 text-sm text-ink transition-[border-color,box-shadow]',
+          'placeholder:text-ink-muted/60 hover:border-line-strong',
+          'focus:border-accent focus:outline-none focus:ring-[3px] focus:ring-accent/15'
+        )}
       />
-    </label>
+    </div>
   );
-});
+}
 
-// ── Photo crop modal ──────────────────────────────────────────────
+/* ── Crop modal ───────────────────────────────────────────────── */
+
 function CropModal({ imageSrc, onApply, onCancel }) {
-  const [scale,  setScale]  = useState(1);
+  const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const imgRef  = useRef(null);
+  const imgRef = useRef(null);
   const dragRef = useRef(null);
+  const containerRef = useRef(null);
 
-  // Set initial scale so the image fills the crop circle.
   const handleImgLoad = () => {
     const img = imgRef.current;
     if (!img) return;
@@ -550,14 +900,17 @@ function CropModal({ imageSrc, onApply, onCancel }) {
     if (!dragRef.current) return;
     setOffset({ x: clientX - dragRef.current.startX, y: clientY - dragRef.current.startY });
   };
-  const stopDrag = () => { dragRef.current = null; };
+  const stopDrag = () => {
+    dragRef.current = null;
+  };
 
-  // Attach non-passive touchmove to prevent page scroll while dragging.
-  const containerRef = useRef(null);
+  // Non-passive touchmove so dragging doesn't scroll the page.
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
-    const handler = (e) => { if (dragRef.current) e.preventDefault(); };
+    if (!el) return undefined;
+    const handler = (e) => {
+      if (dragRef.current) e.preventDefault();
+    };
     el.addEventListener('touchmove', handler, { passive: false });
     return () => el.removeEventListener('touchmove', handler);
   }, []);
@@ -567,7 +920,7 @@ function CropModal({ imageSrc, onApply, onCancel }) {
     if (!img) return;
     const OUTPUT = 400;
     const canvas = document.createElement('canvas');
-    canvas.width  = OUTPUT;
+    canvas.width = OUTPUT;
     canvas.height = OUTPUT;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ffffff';
@@ -575,36 +928,47 @@ function CropModal({ imageSrc, onApply, onCancel }) {
 
     const iW = img.naturalWidth;
     const iH = img.naturalHeight;
-    // Image center in container = (CROP_SIZE/2 + offset.x, CROP_SIZE/2 + offset.y)
-    // Image top-left = center - half of scaled size
     const imgLeft = CROP_SIZE / 2 + offset.x - (iW * scale) / 2;
-    const imgTop  = CROP_SIZE / 2 + offset.y - (iH * scale) / 2;
-    // Convert crop area (0,0,CROP_SIZE,CROP_SIZE) to natural image coords
-    const srcX    = -imgLeft / scale;
-    const srcY    = -imgTop  / scale;
+    const imgTop = CROP_SIZE / 2 + offset.y - (iH * scale) / 2;
+    const srcX = -imgLeft / scale;
+    const srcY = -imgTop / scale;
     const srcSize = CROP_SIZE / scale;
     ctx.drawImage(img, srcX, srcY, srcSize, srcSize, 0, 0, OUTPUT, OUTPUT);
     onApply(canvas.toDataURL('image/jpeg', 0.88));
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="flex w-full max-w-sm flex-col items-center rounded-xl bg-white p-6 shadow-2xl">
-        <h3 className="mb-1 text-sm font-semibold text-slate-800">Crop photo</h3>
-        <p className="mb-4 text-xs text-slate-500">Drag to reposition · Scroll or slide to zoom</p>
-
-        {/* Crop preview circle */}
+    <Modal
+      open
+      onClose={onCancel}
+      size="sm"
+      title="Crop your photo"
+      description="Drag to reposition, then zoom to frame it."
+      footer={
+        <>
+          <Button size="sm" variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button size="sm" variant="primary" onClick={handleApply}>
+            Use photo
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col items-center">
         <div
           ref={containerRef}
-          className="relative cursor-grab overflow-hidden rounded-full bg-slate-200 active:cursor-grabbing"
+          className="relative cursor-grab overflow-hidden rounded border border-line bg-inset active:cursor-grabbing"
           style={{ width: CROP_SIZE, height: CROP_SIZE }}
           onMouseDown={(e) => startDrag(e.clientX, e.clientY)}
           onMouseMove={(e) => moveDrag(e.clientX, e.clientY)}
           onMouseUp={stopDrag}
           onMouseLeave={stopDrag}
           onTouchStart={(e) => startDrag(e.touches[0].clientX, e.touches[0].clientY)}
+          onTouchMove={(e) => moveDrag(e.touches[0].clientX, e.touches[0].clientY)}
           onTouchEnd={stopDrag}
         >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             ref={imgRef}
             src={imageSrc}
@@ -622,51 +986,33 @@ function CropModal({ imageSrc, onApply, onCancel }) {
               pointerEvents: 'none',
             }}
           />
-          {/* Border overlay */}
-          <div style={{
-            position: 'absolute', inset: 0, borderRadius: '50%',
-            boxShadow: 'inset 0 0 0 2px rgba(255,255,255,0.75)',
-            pointerEvents: 'none',
-          }} />
-        </div>
-
-        {/* Zoom slider */}
-        <div className="mt-4 flex w-full items-center gap-2">
-          <span className="text-sm text-slate-400">−</span>
-          <input
-            type="range" min="0.1" max="4" step="0.01" value={scale}
-            onChange={(e) => setScale(Number(e.target.value))}
-            className="flex-1 accent-slate-900"
+          {/* Shows the 100×120 print aspect the CV actually uses. */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0"
+            style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.6)' }}
           />
-          <span className="text-sm text-slate-400">+</span>
         </div>
 
-        <div className="mt-5 flex w-full gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="flex-1 rounded-md border border-slate-200 py-2 text-sm font-medium text-slate-700 hover:border-slate-300 hover:text-slate-900"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleApply}
-            className="flex-1 rounded-md bg-slate-900 py-2 text-sm font-medium text-white hover:bg-slate-800"
-          >
-            Apply
-          </button>
+        <div className="mt-4 flex w-full items-center gap-3">
+          <span aria-hidden className="text-xs text-ink-muted">
+            −
+          </span>
+          <input
+            type="range"
+            min="0.1"
+            max="4"
+            step="0.01"
+            value={scale}
+            aria-label="Zoom"
+            onChange={(e) => setScale(Number(e.target.value))}
+            className="flex-1 accent-accent"
+          />
+          <span aria-hidden className="text-xs text-ink-muted">
+            +
+          </span>
         </div>
       </div>
-    </div>
-  );
-}
-
-function PhotoPlaceholder() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className="h-full w-full p-4 text-slate-400" aria-hidden="true">
-      <circle cx="12" cy="9" r="3.5" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M4.5 19.5c1.5-3.5 4.5-5 7.5-5s6 1.5 7.5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
+    </Modal>
   );
 }

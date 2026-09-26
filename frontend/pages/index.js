@@ -1,24 +1,42 @@
 // frontend/pages/index.js
 // ---------------------------------------------------------------
-// Home / builder page. Auth-gated:
-//   - 'loading'         → spinner while we verify the session token
-//   - 'unauthenticated' → kick to /login
-//   - 'authenticated'   → render the builder, populated from /api/cv
+// The CV builder. Auth-gated:
+//   'loading'         → verifying the session token
+//   'unauthenticated' → redirect to /login
+//   'authenticated'   → three-zone workspace (sections · form · preview)
 //
-// Auto-save: a debounced PUT /api/cv 1.5s after the last change.
+// Auto-save: a debounced PUT /api/cv 1.5s after the last change, skipped
+// when nothing actually changed since the last successful save.
 // ---------------------------------------------------------------
 
 import {
-  useCallback, useDeferredValue, useEffect, useMemo, useRef, useState,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
 } from 'react';
 import dynamic from 'next/dynamic';
-import Head from 'next/head';
 import { useRouter } from 'next/router';
 
 import { useAuth } from '../hooks/useAuth';
 import { loadCV, saveCV } from '../services/cv';
 import { API_URL, getToken } from '../services/api';
-import { uid } from '../utils/resume';
+import { uid, isEffectivelyEmpty, sectionStatus } from '../utils/resume';
+import { cn } from '../utils/cn';
+import AppShell from '../components/AppShell';
+import SectionNav from '../components/SectionNav';
+import {
+  Alert,
+  Badge,
+  Button,
+  Modal,
+  Panel,
+  Segmented,
+  Skeleton,
+  useToast,
+} from '../components/ui';
 
 const ResumeForm = dynamic(() => import('../components/ResumeForm'), {
   ssr: false,
@@ -30,6 +48,11 @@ const LivePreview = dynamic(() => import('../components/LivePreview'), {
 });
 
 const AUTOSAVE_DELAY_MS = 1500;
+
+const TEMPLATE_OPTIONS = [
+  { value: 'classic', label: 'Classic' },
+  { value: 'modern', label: 'Modern' },
+];
 
 const EMPTY_RESUME = {
   name: '',
@@ -53,6 +76,7 @@ const EMPTY_RESUME = {
 export default function Home() {
   const router = useRouter();
   const { status, user, logout } = useAuth();
+  const { toast } = useToast();
 
   const [resume, setResume] = useState(EMPTY_RESUME);
   const [template, setTemplate] = useState('classic');
@@ -60,17 +84,19 @@ export default function Home() {
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [loadingCV, setLoadingCV] = useState(true);
   const [saveState, setSaveState] = useState('idle'); // idle | saving | saved | error
+  const [mobileView, setMobileView] = useState('form'); // form | preview
 
-  // Redirect anonymous users to /login, and admins to /admin
-  // (admins do not build CVs — the builder is for students/faculty only).
+  // Students build CVs; admins are sent to the dashboard.
   useEffect(() => {
     if (status === 'unauthenticated') router.replace('/login');
     else if (status === 'authenticated' && user?.isAdmin) router.replace('/admin');
   }, [status, user, router]);
 
-  // Once the session is verified, fetch the user's CV.
+  // ── Load ────────────────────────────────────────────────────
+  const lastSavedRef = useRef(null);
+
   useEffect(() => {
-    if (status !== 'authenticated') return;
+    if (status !== 'authenticated') return undefined;
     let cancelled = false;
     (async () => {
       setLoadingCV(true);
@@ -78,47 +104,57 @@ export default function Home() {
         const { data } = await loadCV();
         if (cancelled) return;
         const merged = { ...EMPTY_RESUME, ...data };
-        // Make sure repeating items have stable IDs (older saves may not).
-        merged.experience     = (merged.experience  || []).map((e) => e.id ? e : { ...e, id: uid() });
-        merged.education      = (merged.education   || []).map((e) => e.id ? e : { ...e, id: uid() });
-        merged.projects       = (merged.projects    || []).map((p) => p.id ? p : { ...p, id: uid() });
+        // Older saves may predate stable ids; backfill so React keys and
+        // reordering stay correct.
+        merged.experience = (merged.experience || []).map((e) => (e.id ? e : { ...e, id: uid() }));
+        merged.education = (merged.education || []).map((e) => (e.id ? e : { ...e, id: uid() }));
+        merged.projects = (merged.projects || []).map((p) => (p.id ? p : { ...p, id: uid() }));
         merged.customSections = (merged.customSections || []).map((s) => ({
           ...s,
           id: s.id || uid(),
-          items: (s.items || []).map((it) => it.id ? it : { ...it, id: uid() }),
+          items: (s.items || []).map((it) => (it.id ? it : { ...it, id: uid() })),
         }));
+        lastSavedRef.current = JSON.stringify(merged);
         setResume(merged);
       } catch (err) {
         console.error('Could not load CV:', err);
+        if (!cancelled) {
+          toast({
+            tone: 'danger',
+            title: 'Could not load your CV',
+            description: 'Check your connection — your saved data is still safe.',
+          });
+        }
       } finally {
         if (!cancelled) setLoadingCV(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
-  // ── Debounced auto-save ────────────────────────────────────
+  // ── Debounced auto-save ─────────────────────────────────────
   const saveTimer = useRef(null);
-  const dirtyRef  = useRef(false);
-  const inflight  = useRef(null);
+  const inflight = useRef(null);
 
   useEffect(() => {
-    // Don't save during the initial population.
-    if (loadingCV || status !== 'authenticated') return;
-    dirtyRef.current = true;
+    if (loadingCV || status !== 'authenticated') return undefined;
+
+    const serialized = JSON.stringify(resume);
+    // Nothing changed since the last successful save (this also stops the
+    // initial load from writing identical data straight back).
+    if (serialized === lastSavedRef.current) return undefined;
 
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      if (!dirtyRef.current) return;
-      dirtyRef.current = false;
-
-      // Cancel any in-flight save by ignoring its outcome.
       const ticket = Symbol('save');
       inflight.current = ticket;
-
       setSaveState('saving');
       try {
         await saveCV(resume);
+        lastSavedRef.current = serialized;
         if (inflight.current === ticket) setSaveState('saved');
       } catch (err) {
         console.error('Auto-save failed:', err);
@@ -129,34 +165,45 @@ export default function Home() {
     return () => clearTimeout(saveTimer.current);
   }, [resume, loadingCV, status]);
 
-  // Flush on tab close — best-effort.
+  // Best-effort flush if the tab closes mid-edit.
   useEffect(() => {
     const handler = () => {
-      if (!dirtyRef.current) return;
+      if (JSON.stringify(resume) === lastSavedRef.current) return;
       const token = getToken();
       if (!token) return;
-      const blob = new Blob(
-        [JSON.stringify({ data: resume })],
-        { type: 'application/json' }
-      );
-      // sendBeacon can't set Authorization headers — fall back to fetch keepalive.
       try {
         fetch(`${API_URL}/api/cv`, {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ data: resume }),
           keepalive: true,
         });
-      } catch { /* noop */ }
+      } catch {
+        /* nothing useful to do while unloading */
+      }
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [resume]);
 
+  const retrySave = useCallback(() => {
+    // Touch the object so the auto-save effect runs again.
+    setResume((prev) => ({ ...prev }));
+  }, []);
+
   const deferredResume = useDeferredValue(resume);
+  const isEmptyCv = isEffectivelyEmpty(resume);
+  const sections = useMemo(() => sectionStatus(resume), [resume]);
+
+  const jumpToSection = useCallback((key) => {
+    setMobileView('form');
+    requestAnimationFrame(() => {
+      document.getElementById(`section-${key}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+  }, []);
 
   const handleDownload = useCallback(async () => {
     try {
@@ -180,216 +227,202 @@ export default function Home() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      toast({ tone: 'success', title: 'PDF downloaded' });
     } catch (err) {
       console.error(err);
-      alert('Could not generate PDF. Make sure the backend is running on port 5000.');
+      toast({
+        tone: 'danger',
+        title: 'Could not generate the PDF',
+        description: 'Please try again in a moment.',
+      });
     } finally {
       setDownloading(false);
     }
-  }, [resume, template]);
+  }, [resume, template, toast]);
 
-  const templateOptions = useMemo(() => ([
-    { value: 'classic', label: 'Classic' },
-    { value: 'modern',  label: 'Modern'  },
-  ]), []);
+  const handleLogout = useCallback(async () => {
+    await logout();
+    router.replace('/login');
+  }, [logout, router]);
 
-  // ── Render gates ──────────────────────────────────────────
-  if (status === 'loading') return <FullPageMessage>Verifying your session…</FullPageMessage>;
-  if (status !== 'authenticated') return null; // redirect in progress
-
-  return (
-    <>
-      <Head>
-        <title>Cviator Pro — Smart Resume Builder</title>
-        <meta name="description" content="Build and download beautiful resumes in seconds." />
-        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-      </Head>
-
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-4 px-4 py-3 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-900 text-xs font-bold text-white">C</div>
-            <span className="text-base font-semibold text-slate-900">
-              Cviator <span className="font-normal text-slate-500">Pro</span>
-            </span>
-          </div>
-
-          <div className="ml-auto flex flex-wrap items-center gap-3">
-            <SaveIndicator state={saveState} />
-            <SegmentedControl
-              label="Template"
-              value={template}
-              onChange={setTemplate}
-              options={templateOptions}
-            />
-            <button
-              type="button"
-              onClick={handleDownload}
-              disabled={downloading}
-              className="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {downloading ? 'Generating…' : 'Download PDF'}
-            </button>
-
-            <UserMenu user={user} onLogout={async () => { await logout(); router.replace('/login'); }} />
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <section>
-            <div className="mb-5">
-              <h1 className="text-xl font-semibold text-slate-900">Build your resume</h1>
-              <p className="mt-1 text-sm text-slate-500">
-                Changes save automatically.
-              </p>
-            </div>
-            {loadingCV ? <FormSkeleton /> : <ResumeForm resume={resume} setResume={setResume} />}
-          </section>
-
-          <section className="lg:sticky lg:top-20 lg:self-start">
-            <div className="mb-5 flex items-end justify-between">
-              <div>
-                <h2 className="text-xl font-semibold text-slate-900">Preview</h2>
-                <p className="mt-1 text-sm text-slate-500">What you see is what the PDF will look like.</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPreviewExpanded(true)}
-                  className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
-                >
-                  Enlarge Preview
-                </button>
-                <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 capitalize">
-                  {template}
-                </span>
-              </div>
-            </div>
-
-            <div className="max-h-[calc(100vh-11rem)] overflow-y-auto scroll-thin rounded-lg border border-slate-200 bg-slate-100 p-4">
-              <LivePreview resume={deferredResume} template={template} />
-            </div>
-          </section>
-        </div>
-      </main>
-
-      <footer className="border-t border-slate-200 bg-white">
-        <div className="mx-auto max-w-7xl px-4 py-4 text-center text-xs text-slate-500 sm:px-6 lg:px-8">
-          Built with Next.js, Tailwind, Express, Postgres, and Puppeteer.
-        </div>
-      </footer>
-
-      {previewExpanded && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/60 px-4 py-6 backdrop-blur-sm sm:px-6">
-          <div className="flex max-h-[calc(100vh-3rem)] w-full max-w-[1120px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-3">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-900">Expanded Preview</h3>
-                <p className="mt-0.5 text-xs text-slate-500">Review the resume at a larger size.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPreviewExpanded(false)}
-                className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
-              >
-                Close
-              </button>
-            </div>
-            <div className="overflow-auto p-5">
-              <LivePreview resume={deferredResume} template={template} />
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-// ── helpers ──────────────────────────────────────────────────
-
-function SaveIndicator({ state }) {
-  const map = {
-    idle:   { dot: 'bg-slate-300', text: '' },
-    saving: { dot: 'bg-amber-400 animate-pulse', text: 'Saving…' },
-    saved:  { dot: 'bg-emerald-500',             text: 'Saved' },
-    error:  { dot: 'bg-red-500',                 text: 'Save failed' },
-  };
-  const cfg = map[state] || map.idle;
-  if (!cfg.text) return null;
-  return (
-    <span className="hidden items-center gap-1.5 text-xs text-slate-500 sm:inline-flex">
-      <span className={`inline-block h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
-      {cfg.text}
-    </span>
-  );
-}
-
-function UserMenu({ user, onLogout }) {
-  const [open, setOpen] = useState(false);
-  const initial = (user?.fullName || user?.email || '?').trim().charAt(0).toUpperCase();
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        onBlur={() => setTimeout(() => setOpen(false), 100)}
-        className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700 transition hover:bg-slate-300"
-        aria-label="Account menu"
-        title={user?.email || ''}
-      >
-        {initial}
-      </button>
-      {open && (
-        <div className="absolute right-0 mt-2 w-56 rounded-md border border-slate-200 bg-white p-2 shadow-lg">
-          <div className="border-b border-slate-100 px-2 pb-2">
-            {user?.fullName && <div className="text-sm font-medium text-slate-900">{user.fullName}</div>}
-            <div className="truncate text-xs text-slate-500">{user?.email}</div>
-          </div>
-          <button
-            type="button"
-            onMouseDown={(e) => { e.preventDefault(); onLogout(); }}
-            className="mt-1 block w-full rounded px-2 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100"
-          >
-            Sign out
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SegmentedControl({ label, value, onChange, options }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="hidden text-xs font-medium uppercase tracking-wider text-slate-500 sm:inline">{label}</span>
-      <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5">
-        {options.map((opt) => {
-          const active = opt.value === value;
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => onChange(opt.value)}
-              className={`rounded px-3 py-1.5 text-xs font-medium transition ${
-                active ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {opt.label}
-            </button>
-          );
-        })}
+  // ── Render gates ────────────────────────────────────────────
+  if (status === 'loading') {
+    return (
+      <div className="flex min-h-full items-center justify-center bg-paper px-6">
+        <p className="text-sm text-ink-muted">Verifying your session…</p>
       </div>
-    </div>
+    );
+  }
+  if (status !== 'authenticated') return null; // redirect in flight
+
+  const previewPanel = (
+    <Panel className="overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-ink">Preview</h2>
+          <span className="hidden text-2xs text-ink-muted sm:inline">A4 · what prints</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Segmented
+            size="sm"
+            value={template}
+            onChange={setTemplate}
+            options={TEMPLATE_OPTIONS}
+            ariaLabel="CV template"
+          />
+          <Button size="sm" variant="ghost" onClick={() => setPreviewExpanded(true)}>
+            Enlarge
+          </Button>
+        </div>
+      </div>
+      <div className="max-h-[calc(100vh-11.5rem)] overflow-y-auto bg-inset p-4 scroll-thin">
+        <LivePreview resume={deferredResume} template={template} />
+      </div>
+    </Panel>
+  );
+
+  return (
+    <AppShell
+      title="Your CV"
+      context="Builder"
+      user={user}
+      onLogout={handleLogout}
+      width="wide"
+      toolbar={
+        <>
+          <SaveIndicator state={saveState} onRetry={retrySave} />
+          <Button
+            variant="primary"
+            onClick={handleDownload}
+            loading={downloading}
+            disabled={isEmptyCv}
+            title={isEmptyCv ? 'Add your details first' : 'Download your CV as a PDF'}
+          >
+            {downloading ? 'Generating…' : 'Download PDF'}
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <p className="eyebrow">Official GIKI format</p>
+          <h1 className="mt-1.5 font-display text-[1.75rem] leading-none tracking-tight text-ink sm:text-[2rem]">
+            Build your CV
+          </h1>
+          <p className="mt-2 text-sm text-ink-muted">
+            Changes save automatically. The preview is exactly what the PDF will contain.
+          </p>
+        </div>
+        <Segmented
+          className="lg:hidden"
+          value={mobileView}
+          onChange={setMobileView}
+          options={[
+            { value: 'form', label: 'Edit' },
+            { value: 'preview', label: 'Preview' },
+          ]}
+          ariaLabel="Switch between editing and preview"
+        />
+      </div>
+
+      {isEmptyCv && !loadingCV && (
+        <Alert tone="warning" title="You’re looking at a sample CV" className="mb-6">
+          The preview shows example content so you can see the format. Start with your personal
+          details and it becomes yours — nothing sample-related is ever saved or exported.
+        </Alert>
+      )}
+
+      <div className="grid gap-6 xl:grid-cols-[15rem_minmax(0,1fr)] xl:gap-7">
+        <SectionNav
+          sections={sections}
+          onJump={jumpToSection}
+          className="hidden xl:sticky xl:top-[4.75rem] xl:block xl:self-start"
+        />
+
+        <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.02fr)] lg:gap-7">
+          <div className={cn('min-w-0', mobileView === 'form' ? 'block' : 'hidden', 'lg:block')}>
+            {loadingCV ? <FormSkeleton /> : <ResumeForm resume={resume} setResume={setResume} />}
+          </div>
+
+          <div
+            className={cn(
+              'min-w-0',
+              mobileView === 'preview' ? 'block' : 'hidden',
+              'lg:sticky lg:top-[4.75rem] lg:block lg:self-start'
+            )}
+          >
+            {loadingCV ? <PreviewSkeleton /> : previewPanel}
+          </div>
+        </div>
+      </div>
+
+      <Modal
+        open={previewExpanded}
+        onClose={() => setPreviewExpanded(false)}
+        size="lg"
+        title="Expanded preview"
+        description="Same document, larger. Close to keep editing."
+        footer={
+          <Button size="sm" variant="secondary" onClick={() => setPreviewExpanded(false)}>
+            Close
+          </Button>
+        }
+      >
+        <div className="max-h-[70vh] overflow-y-auto bg-inset p-4 scroll-thin">
+          <LivePreview resume={deferredResume} template={template} />
+        </div>
+      </Modal>
+    </AppShell>
+  );
+}
+
+/* ── helpers ──────────────────────────────────────────────────── */
+
+function SaveIndicator({ state, onRetry }) {
+  if (state === 'idle') return null;
+
+  if (state === 'error') {
+    return (
+      <span className="flex items-center gap-2">
+        <Badge tone="danger">Not saved</Badge>
+        <Button size="sm" variant="ghost" onClick={onRetry}>
+          Retry
+        </Button>
+      </span>
+    );
+  }
+
+  const saving = state === 'saving';
+  return (
+    <span
+      className="hidden items-center gap-1.5 text-xs text-ink-muted sm:inline-flex"
+      aria-live="polite"
+    >
+      <span
+        aria-hidden
+        className={cn(
+          'h-1.5 w-1.5 rounded-full',
+          saving ? 'animate-pulse bg-ochre' : 'bg-accent'
+        )}
+      />
+      {saving ? 'Saving…' : 'Saved'}
+    </span>
   );
 }
 
 function FormSkeleton() {
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {[0, 1, 2].map((i) => (
-        <div key={i} className="h-32 animate-pulse rounded-lg border border-slate-200 bg-white" />
+        <div key={i} className="rounded-lg border border-line bg-surface p-5">
+          <Skeleton className="h-2.5 w-28" />
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <Skeleton className="h-9" />
+            <Skeleton className="h-9" />
+            <Skeleton className="h-9" />
+            <Skeleton className="h-9" />
+          </div>
+        </div>
       ))}
     </div>
   );
@@ -397,14 +430,9 @@ function FormSkeleton() {
 
 function PreviewSkeleton() {
   return (
-    <div className="mx-auto h-[600px] w-full max-w-[820px] animate-pulse rounded-md border border-slate-200 bg-white" />
-  );
-}
-
-function FullPageMessage({ children }) {
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50">
-      <p className="text-sm text-slate-500">{children}</p>
-    </main>
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <Skeleton className="h-2.5 w-20" />
+      <div className="mt-4 aspect-[210/297] w-full animate-pulse rounded bg-line/50" />
+    </div>
   );
 }

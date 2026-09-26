@@ -40,3 +40,6 @@ Thumbs.db
 
 # Database backups — contain real user data (emails, names, password hashes)
 backups/
+
+# Claude Code scheduling artifact
+.claude/scheduled_tasks.lock

@@ -1,47 +1,45 @@
 // frontend/pages/signup.js
 // Create an account.
-//   • Student → email must match  u<7-digits>@giki.edu.pk ; needs faculty/department
-//   • Admin   → email must match  *@giki.edu.pk ; account created in 'pending' state
-//                until the root admin approves (via emailed link or the dashboard).
-//
-// Faculty list is fetched from the backend (/api/admin/filters is admin-only;
-// we expose the same data via /api/auth/filters? — no, simpler: keep a static
-// list synced with the backend seed). We hit the public faculties endpoint instead.
+//   • Student → u<7-digits>@giki.edu.pk, plus reg no / faculty / batch
+//   • Admin   → any @giki.edu.pk address; stays 'pending' until the root
+//               admin approves (via the emailed link or the dashboard).
 
 import { useEffect, useMemo, useState } from 'react';
-import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useAuth } from '../hooks/useAuth';
 import { signupRaw } from '../services/auth';
 import { API_URL } from '../services/api';
-
-import { AuthShell, Field } from './login';
+import AuthLayout from '../components/AuthLayout';
+import { Alert, Button, SelectField, Segmented, TextField } from '../components/ui';
 
 const STUDENT_EMAIL_RE = /^u\d{7}@giki\.edu\.pk$/i;
-const ADMIN_EMAIL_RE   = /^[a-z0-9._-]+@giki\.edu\.pk$/i;
+const ADMIN_EMAIL_RE = /^[a-z0-9._-]+@giki\.edu\.pk$/i;
+
+const ROLE_OPTIONS = [
+  { value: 'student', label: 'Student' },
+  { value: 'admin', label: 'Staff / Admin' },
+];
 
 export default function SignupPage() {
   const router = useRouter();
   const { status, user, setSession } = useAuth();
 
-  const [role,      setRole]      = useState('student');
+  const [role, setRole] = useState('student');
   const [firstName, setFirstName] = useState('');
-  const [lastName,  setLastName]  = useState('');
-  const [email,     setEmail]     = useState('');
-  const [password,  setPassword]  = useState('');
+  const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
-  // Student
-  const [regNo,        setRegNo]        = useState('');
-  const [facultyId,    setFacultyId]    = useState('');
+  const [regNo, setRegNo] = useState('');
+  const [facultyId, setFacultyId] = useState('');
   const [departmentId, setDepartmentId] = useState('');
-  const [batch,        setBatch]        = useState('');
+  const [batch, setBatch] = useState('');
 
-  // Faculty data (fetched from public endpoint)
   const [faculties, setFaculties] = useState([]);
-
   const [error, setError] = useState('');
-  const [busy,  setBusy]  = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (status === 'authenticated') {
@@ -49,46 +47,62 @@ export default function SignupPage() {
     }
   }, [status, user, router]);
 
-  // Public faculties endpoint
   useEffect(() => {
+    let cancelled = false;
     fetch(`${API_URL}/api/public/faculties`)
-      .then((r) => r.ok ? r.json() : Promise.reject())
-      .then((d) => setFaculties(d.faculties || []))
-      .catch(() => setFaculties([]));
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('failed'))))
+      .then((d) => {
+        if (!cancelled) setFaculties(d.faculties || []);
+      })
+      .catch(() => {
+        if (!cancelled) setFaculties([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const selectedFaculty = useMemo(
     () => faculties.find((f) => String(f.id) === String(facultyId)),
     [faculties, facultyId]
   );
-  const showDepartment = selectedFaculty && selectedFaculty.departments.length > 1;
+  const showDepartment = !!selectedFaculty && selectedFaculty.departments.length > 1;
 
-  // Reset department when faculty changes
-  useEffect(() => { setDepartmentId(''); }, [facultyId]);
+  useEffect(() => {
+    setDepartmentId('');
+  }, [facultyId]);
 
   function validate() {
-    if (password.length < 8) return 'Password must be at least 8 characters.';
+    const errs = {};
     const e = email.trim().toLowerCase();
+
+    if (!firstName.trim()) errs.firstName = 'Required.';
+    if (!lastName.trim()) errs.lastName = 'Required.';
+
     if (role === 'student' && !STUDENT_EMAIL_RE.test(e)) {
-      return 'Students must use the official GIKI format: u#######@giki.edu.pk';
+      errs.email = 'Use your student address: u#######@giki.edu.pk';
+    } else if (role === 'admin' && !ADMIN_EMAIL_RE.test(e)) {
+      errs.email = 'A @giki.edu.pk address is required.';
     }
-    if (role === 'admin' && !ADMIN_EMAIL_RE.test(e)) {
-      return 'Admin accounts require a @giki.edu.pk email address.';
-    }
+
+    if (password.length < 8) errs.password = 'At least 8 characters.';
+
     if (role === 'student') {
-      if (!/^\d{7}$/.test(regNo.trim())) return 'Registration number must be 7 digits.';
-      if (!/^(19|20)\d{2}$/.test(batch.trim())) return 'Batch must be a 4-digit year (e.g. 2024).';
-      if (!facultyId) return 'Please select your faculty.';
-      if (showDepartment && !departmentId) return 'Please select your department.';
+      if (!/^\d{7}$/.test(regNo.trim())) errs.regNo = 'Must be exactly 7 digits.';
+      if (!/^(19|20)\d{2}$/.test(batch.trim())) errs.batch = 'Four-digit year, e.g. 2024.';
+      if (!facultyId) errs.facultyId = 'Select your faculty.';
+      if (showDepartment && !departmentId) errs.departmentId = 'Select your department.';
     }
-    return null;
+    return errs;
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
-    const v = validate();
-    if (v) { setError(v); return; }
+    const errs = validate();
+    setFieldErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+
     setBusy(true);
     try {
       const payload = {
@@ -96,14 +110,14 @@ export default function SignupPage() {
         password,
         role,
         firstName: firstName.trim(),
-        lastName:  lastName.trim(),
+        lastName: lastName.trim(),
       };
       if (role === 'student') {
         Object.assign(payload, {
-          regNo:        regNo.trim(),
-          facultyId:    Number(facultyId),
+          regNo: regNo.trim(),
+          facultyId: Number(facultyId),
           departmentId: departmentId ? Number(departmentId) : undefined,
-          batch:        batch.trim(),
+          batch: batch.trim(),
         });
       }
 
@@ -120,123 +134,166 @@ export default function SignupPage() {
         return;
       }
       if (result.pendingApproval) {
-        router.replace(`/signup-pending?email=${encodeURIComponent(result.email)}${result.devLink ? `&devLink=${encodeURIComponent(result.devLink)}` : ''}`);
+        router.replace(
+          `/signup-pending?email=${encodeURIComponent(result.email)}${
+            result.devLink ? `&devLink=${encodeURIComponent(result.devLink)}` : ''
+          }`
+        );
         return;
       }
+      setBusy(false);
     } catch (err) {
       setError(err.message || 'Could not create account.');
-    } finally {
       setBusy(false);
     }
   }
 
   return (
-    <>
-      <Head><title>Create account — Cviator Pro</title></Head>
-      <AuthShell title="Create your account" subtitle="Join your university's CV portal.">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Role selector */}
-          <div>
-            <span className="mb-1 block text-xs font-medium text-slate-600">I am a</span>
-            <div className="inline-flex w-full rounded-md border border-slate-200 bg-white p-0.5">
-              {[{ value: 'student', label: 'Student' }, { value: 'admin', label: 'Admin' }].map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setRole(opt.value)}
-                  className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition ${
-                    role === opt.value ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="First name" value={firstName} onChange={setFirstName} required maxLength={50} autoComplete="given-name" />
-            <Field label="Last name"  value={lastName}  onChange={setLastName}  required maxLength={50} autoComplete="family-name" />
-          </div>
-
-          <Field
-            label={role === 'student' ? 'GIKI Email (e.g. u2024597@giki.edu.pk)' : 'GIKI Email'}
-            type="email"
-            value={email}
-            onChange={setEmail}
-            required
-            autoComplete="email"
-            placeholder={role === 'student' ? 'u2024597@giki.edu.pk' : 'your.name@giki.edu.pk'}
+    <AuthLayout
+      pageTitle="Create account"
+      title="Create your account"
+      subtitle="Your institute email is used to verify you belong to GIKI."
+      footer={
+        <p className="text-sm text-ink-muted">
+          Already have an account?{' '}
+          <Link href="/login" className="font-medium text-accent underline decoration-accent/30 underline-offset-2 hover:decoration-accent">
+            Sign in
+          </Link>
+        </p>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+        <div>
+          <span className="mb-1.5 block text-xs font-medium text-ink-soft">I am a</span>
+          <Segmented
+            value={role}
+            onChange={setRole}
+            options={ROLE_OPTIONS}
+            ariaLabel="Account type"
+            className="w-full [&>button]:flex-1"
           />
-          <Field label="Password" type="password" value={password} onChange={setPassword} required minLength={8} autoComplete="new-password" placeholder="At least 8 characters" />
+        </div>
 
-          {role === 'student' && (
-            <>
-              <Field label="Registration number" value={regNo} onChange={setRegNo} required maxLength={7} placeholder="e.g. 2018128" />
+        <div className="grid grid-cols-2 gap-3">
+          <TextField
+            label="First name"
+            value={firstName}
+            onChange={setFirstName}
+            error={fieldErrors.firstName}
+            maxLength={50}
+            autoComplete="given-name"
+            required
+          />
+          <TextField
+            label="Last name"
+            value={lastName}
+            onChange={setLastName}
+            error={fieldErrors.lastName}
+            maxLength={50}
+            autoComplete="family-name"
+            required
+          />
+        </div>
 
-              <label className="block">
-                <span className="mb-1 block text-xs font-medium text-slate-600">Faculty</span>
-                <select
-                  value={facultyId}
-                  onChange={(e) => setFacultyId(e.target.value)}
-                  required
-                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100"
-                >
-                  <option value="">Select your faculty…</option>
-                  {faculties.map((f) => (
-                    <option key={f.id} value={f.id}>{f.name}</option>
-                  ))}
-                </select>
-              </label>
+        <TextField
+          label="GIKI email"
+          type="email"
+          value={email}
+          onChange={setEmail}
+          error={fieldErrors.email}
+          hint={role === 'student' ? 'Format: u#######@giki.edu.pk' : 'Any @giki.edu.pk mailbox.'}
+          placeholder={role === 'student' ? 'u2021458@giki.edu.pk' : 'your.name@giki.edu.pk'}
+          autoComplete="email"
+          required
+        />
 
-              {showDepartment && (
-                <label className="block">
-                  <span className="mb-1 block text-xs font-medium text-slate-600">Department</span>
-                  <select
-                    value={departmentId}
-                    onChange={(e) => setDepartmentId(e.target.value)}
-                    required
-                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100"
-                  >
-                    <option value="">Select your department…</option>
-                    {selectedFaculty.departments.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
+        <TextField
+          label="Password"
+          type="password"
+          value={password}
+          onChange={setPassword}
+          error={fieldErrors.password}
+          hint="At least 8 characters."
+          placeholder="••••••••"
+          autoComplete="new-password"
+          required
+        />
 
-              <Field label="Batch / Year" value={batch} onChange={setBatch} required maxLength={4} placeholder="e.g. 2024" />
-            </>
-          )}
+        {role === 'student' && (
+          <div className="space-y-4 border-t border-line pt-5">
+            <p className="eyebrow">Student details</p>
+            <div className="grid grid-cols-2 gap-3">
+              <TextField
+                label="Registration number"
+                value={regNo}
+                onChange={setRegNo}
+                error={fieldErrors.regNo}
+                maxLength={7}
+                inputMode="numeric"
+                placeholder="2021458"
+                inputClassName="ident"
+                required
+              />
+              <TextField
+                label="Batch"
+                value={batch}
+                onChange={setBatch}
+                error={fieldErrors.batch}
+                maxLength={4}
+                inputMode="numeric"
+                placeholder="2021"
+                inputClassName="ident"
+                required
+              />
+            </div>
 
-          {role === 'admin' && (
-            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              Admin signups require approval by the institute's root administrator.
-              Once approved you'll receive an email and can sign in.
-            </p>
-          )}
+            <SelectField
+              label="Faculty"
+              value={facultyId}
+              onChange={setFacultyId}
+              error={fieldErrors.facultyId}
+              placeholder={faculties.length ? 'Select your faculty…' : 'Loading faculties…'}
+              options={faculties.map((f) => ({ value: String(f.id), label: f.name }))}
+              required
+            />
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
+            {showDepartment && (
+              <SelectField
+                label="Department"
+                value={departmentId}
+                onChange={setDepartmentId}
+                error={fieldErrors.departmentId}
+                placeholder="Select your department…"
+                options={selectedFaculty.departments.map((d) => ({
+                  value: String(d.id),
+                  label: d.name,
+                }))}
+                required
+              />
+            )}
+          </div>
+        )}
 
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full rounded-md bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60"
-          >
+        {role === 'admin' && (
+          <Alert tone="warning" title="Approval required">
+            Staff accounts are reviewed by the institute&apos;s root administrator. You&apos;ll get
+            an email once your access is approved.
+          </Alert>
+        )}
+
+        {error && <Alert tone="danger">{error}</Alert>}
+
+        <div>
+          <Button type="submit" variant="primary" size="lg" loading={busy} className="w-full">
             {busy ? 'Creating account…' : 'Create account'}
-          </button>
+          </Button>
           {busy && (
-            <p className="text-center text-xs text-slate-400">
+            <p className="mt-2 text-center text-xs text-ink-muted">
               Sending your confirmation email — this can take up to a minute.
             </p>
           )}
-        </form>
-        <p className="mt-5 text-center text-sm text-slate-500">
-          Already have an account?{' '}
-          <Link href="/login" className="font-medium text-slate-900 hover:underline">Sign in</Link>
-        </p>
-      </AuthShell>
-    </>
+        </div>
+      </form>
+    </AuthLayout>
   );
 }
